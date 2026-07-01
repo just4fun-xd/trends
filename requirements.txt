@@ -1,0 +1,19 @@
+# Минималистичный стек — каждая строка логики понятна механически.
+# Без backtrader/vectorbt/zipline: движок свой, ~200 строк, полный контроль.
+
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+pyarrow>=14.0        # parquet-панели Databento
+
+# Источники данных (опциональны для ядра — ставить по надобности).
+yfinance>=0.2.40     # equity + commodity ETF, дневные и интрадей
+databento>=0.34      # continuous futures (только для scripts/fetch_databento)
+
+# Будущие мат-модели (треки в разработке — раскомментировать при реализации).
+# statsmodels>=0.14  # OU OLS, GARCH, коинтеграция
+# scipy>=1.11        # оптимизация Markowitz, wavelet
+# hmmlearn>=0.3      # HMM regime detection (трек 2.2)
+
+# Разработка.
+# flake8>=6.0        # линтер, max-line-length=79

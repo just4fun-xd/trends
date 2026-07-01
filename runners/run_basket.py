@@ -1,0 +1,172 @@
+"""Раннер: прогон посерийных стратегий по корзине инструментов.
+
+Загружает данные через DataSource (yfinance или Databento — сменные),
+прогоняет стратегию на каждом инструменте, печатает verdict-таблицу
+с цветным выводом (✅/⚠️/❌) как в отчётах Александру.
+
+Запуск (пример):
+    python -m runners.run_basket --strategy champion --source yf \\
+        --start 2021-01-01 --end 2026-01-01
+
+Живые данные Yahoo требуют сети; в песочнице недоступны — локально ОК.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+import pandas as pd
+
+from core.config import COMMODITY_YF, EQUITY_BASKET
+from core.engine import BacktestResult, run_engine
+from data.databento_source import DatabentoSource
+from data.yfinance_source import YFinanceSource
+from strategies import bollinger, donchian, ema
+from strategies.ou import ou_zscore
+
+# ANSI-цвета. Выравнивание встраивается ДО escape-кодов (иначе f-string
+# считает ширину неверно из-за невидимых символов) — урок проекта.
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
+BOLD = "\033[1m"
+
+# Реестр боевых и закрытых стратегий (имя CLI -> функция).
+STRATEGIES = {
+    # EMA
+    "ema_cross": ema.ema_cross,
+    "ema_ensemble": ema.ema_ensemble,
+    "ema_vt": ema.ema_ensemble_voltarget,          # champion equity
+    "ema_barbell": ema.ema_ensemble_barbell_voltarget,
+    # Donchian
+    "donchian": donchian.donchian_breakout,
+    "donchian_vt": donchian.donchian_ensemble_voltarget,
+    "champion": donchian.donchian_est_macd_4step_take,  # champion commodity
+    "4step_pyr": donchian.donchian_est_macd_4step_pyramid,
+    # Bollinger / mean-rev
+    "bb_rsi": bollinger.bollinger_rsi,
+    "bb_rsi_vt": bollinger.bollinger_rsi_voltarget,
+    # OU (осторожно: не автономна, для сравнения)
+    "ou": ou_zscore,
+}
+
+
+def _verdict(res: BacktestResult, dd_limit: float = 0.40) -> str:
+    """Цветной вердикт по результату (проходит DD / прибыльна).
+
+    Args:
+        res: Результат бэктеста.
+        dd_limit: Лимит просадки.
+
+    Returns:
+        Строка вердикта с ANSI-цветом.
+    """
+    if not res.passes_dd(dd_limit):
+        return f"{RED}❌ DD{res.max_drawdown:.0%}{RESET}"
+    if res.total_return > 0:
+        return f"{GREEN}✅ +{res.total_return:.0%}{RESET}"
+    return f"{YELLOW}⚠️ {res.total_return:.0%}{RESET}"
+
+
+def run_strategy_on_basket(
+    strategy_fn,
+    basket: dict,
+    source,
+    start: str,
+    end: str,
+    interval: str = "1d",
+    cost: float = 0.0002,
+) -> pd.DataFrame:
+    """Прогоняет стратегию по всей корзине, возвращает сводную таблицу.
+
+    Args:
+        strategy_fn: Функция стратегии (Bars -> position).
+        basket: dict {название: тикер}.
+        source: DataSource бэкенд.
+        start: Дата начала.
+        end: Дата конца.
+        interval: Таймфрейм ('1d', '4h', ...).
+        cost: Издержки.
+
+    Returns:
+        DataFrame сводки: инструмент, доходность, DD, Sharpe, проходит DD.
+    """
+    rows = []
+    for name, ticker in basket.items():
+        try:
+            bars = source.load(ticker, start, end, interval)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  {YELLOW}пропуск {name} ({ticker}): {exc}{RESET}")
+            continue
+        pos = strategy_fn(bars)
+        res = run_engine(bars, pos, cost=cost)
+        rows.append({
+            "instrument": name,
+            "return": res.total_return,
+            "max_dd": res.max_drawdown,
+            "sharpe": res.sharpe,
+            "passes_dd": res.passes_dd(),
+        })
+        print(f"  {name:14s} {_verdict(res)}  "
+              f"Sharpe {res.sharpe:+.2f}")
+    return pd.DataFrame(rows)
+
+
+def print_summary(df: pd.DataFrame, strategy_name: str) -> None:
+    """Печатает портфельную сводку по таблице результатов.
+
+    Портфель = среднее по инструментам; max DD портфеля = worst-case
+    среди инструментов (не средневзвешенная) — как в BENCHMARK_RESULTS.
+
+    Args:
+        df: Таблица результатов run_strategy_on_basket.
+        strategy_name: Имя стратегии для заголовка.
+    """
+    if df.empty:
+        print(f"{RED}Нет результатов (данные недоступны?){RESET}")
+        return
+    port_ret = df["return"].mean()
+    worst_dd = df["max_dd"].min()
+    profitable = int((df["return"] > 0).sum())
+    total = len(df)
+    med_ret = df["return"].median()
+
+    print(f"\n{BOLD}=== {strategy_name} — портфель ==={RESET}")
+    print(f"  Средняя доходность:  {port_ret:+.1%}")
+    print(f"  Медианная доходность: {med_ret:+.1%}")
+    print(f"  Worst-case DD:       {worst_dd:.1%}")
+    print(f"  Прибыльных:          {profitable}/{total}")
+    print(f"  Проходят DD<40%:     {int(df['passes_dd'].sum())}/{total}")
+
+
+def main() -> None:
+    """CLI-точка входа раннера."""
+    parser = argparse.ArgumentParser(description="Прогон стратегии по корзине")
+    parser.add_argument("--strategy", default="champion",
+                        choices=list(STRATEGIES.keys()))
+    parser.add_argument("--source", default="yf", choices=["yf", "databento"])
+    parser.add_argument("--basket", default="commodity",
+                        choices=["commodity", "equity"])
+    parser.add_argument("--start", default="2021-01-01")
+    parser.add_argument("--end", default="2026-01-01")
+    parser.add_argument("--interval", default="1d")
+    parser.add_argument("--cost", type=float, default=0.0002)
+    args = parser.parse_args()
+
+    source = (YFinanceSource() if args.source == "yf"
+              else DatabentoSource())
+    basket = (COMMODITY_YF if args.basket == "commodity" else EQUITY_BASKET)
+    strategy_fn = STRATEGIES[args.strategy]
+
+    print(f"{BOLD}Стратегия {args.strategy} | {args.basket} | "
+          f"{args.source} | {args.interval} | {args.start}..{args.end}{RESET}")
+    df = run_strategy_on_basket(
+        strategy_fn, basket, source, args.start, args.end,
+        args.interval, args.cost,
+    )
+    print_summary(df, args.strategy)
+
+
+if __name__ == "__main__":
+    main()
