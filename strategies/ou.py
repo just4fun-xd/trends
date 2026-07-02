@@ -22,27 +22,54 @@ import pandas as pd
 from core.bars import Bars
 
 
-def ou_fit(series: pd.Series) -> dict:
-    """Оценивает параметры OU по ряду через OLS (одна регрессия).
+def ou_fit(series: pd.Series, adf_alpha: float = 0.05) -> dict:
+    """Оценивает параметры OU по ряду через OLS + ADF-фильтр.
 
     ΔX_t = a + b·X_{t-1} + ε  =>  θ=-b, μ=a/θ, half_life=ln(2)/θ.
+
+    ФИЛЬТР СТАЦИОНАРНОСТИ (аудит 2, Gemini): перед OLS прогоняем
+    Augmented Dickey-Fuller. Причина: OLS-оценка b смещена вниз на
+    конечной выборке (само распределение Дики-Фуллера), поэтому на
+    ЧИСТОМ random walk (истинное b=0) почти всегда выходит b<0 -> θ>0 ->
+    ложное «well_defined». Проверка знака θ случайное блуждание НЕ
+    отсекает. ADF даёт формальный тест: p > adf_alpha -> нет статзначимой
+    реверсии -> well_defined=False. Это формализует shuffle-control из
+    OU_RESULTS.md (отделить реальную реверсию от артефакта).
 
     ВАЖНО (урок OU_RESULTS.md): применять к ЭКОНОМИЧЕСКИ осмысленному
     ряду (спред пары, лог-цена), НЕ к (цена - короткая SMA) — последнее
     даёт half-life 7-9д как АРТЕФАКТ фильтра (SMA догоняет цену с лагом),
-    а не свойство рынка. Half-life детрендированного ряда — почти
-    тавтология.
+    а не свойство рынка.
 
     Args:
         series: Ряд для оценки (уровень, не приращения).
+        adf_alpha: Порог p-value ADF-теста. p выше -> ряд считается
+            нестационарным, well_defined=False.
 
     Returns:
-        dict с ключами theta, mu, sigma, half_life, well_defined (bool).
+        dict с ключами theta, mu, sigma, half_life, adf_pvalue,
+        well_defined (bool).
     """
+    fail = {"theta": np.nan, "mu": np.nan, "sigma": np.nan,
+            "half_life": np.nan, "adf_pvalue": np.nan,
+            "well_defined": False}
     x = series.dropna()
     if len(x) < 30:
-        return {"theta": np.nan, "mu": np.nan, "sigma": np.nan,
-                "half_life": np.nan, "well_defined": False}
+        return fail
+
+    # ADF-фильтр стационарности (мягкий fallback, если нет statsmodels).
+    adf_pvalue = np.nan
+    try:
+        from statsmodels.tsa.stattools import adfuller
+        adf_pvalue = float(adfuller(x.values, maxlag=1)[1])
+        if adf_pvalue > adf_alpha:
+            fail["adf_pvalue"] = adf_pvalue
+            return fail
+    except ImportError:
+        # statsmodels не установлен — ADF пропущен, θ>0 остаётся
+        # НЕОБХОДИМЫМ, но НЕ достаточным условием. Помечаем в выводе.
+        pass
+
     x_lag = x.shift(1).dropna()
     dx = (x - x.shift(1)).dropna()
     # Выравниваем.
@@ -54,14 +81,17 @@ def ou_fit(series: pd.Series) -> dict:
     theta = -b
     if theta <= 0:
         # Не mean-reverting (θ<=0) — half-life не определён.
-        return {"theta": theta, "mu": np.nan, "sigma": np.nan,
-                "half_life": np.nan, "well_defined": False}
+        out = dict(fail)
+        out["theta"] = theta
+        out["adf_pvalue"] = adf_pvalue
+        return out
     mu = a / theta
     resid = dx.values - A @ coef
     sigma = np.std(resid)
     half_life = np.log(2) / theta
     return {"theta": theta, "mu": mu, "sigma": sigma,
-            "half_life": half_life, "well_defined": True}
+            "half_life": half_life, "adf_pvalue": adf_pvalue,
+            "well_defined": True}
 
 
 def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:

@@ -25,7 +25,8 @@ from core.config import (
 from core.engine import BacktestResult, run_engine
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
-from strategies import bollinger, donchian, ema
+from diagnostics.yearly import format_yearly_table, yearly_breakdown
+from strategies import bollinger, donchian, ema, seasonal
 from strategies.ou import ou_zscore
 
 # ANSI-цвета. Выравнивание встраивается ДО escape-кодов (иначе f-string
@@ -51,6 +52,11 @@ STRATEGIES = {
     # Bollinger / mean-rev
     "bb_rsi": bollinger.bollinger_rsi,
     "bb_rsi_vt": bollinger.bollinger_rsi_voltarget,
+    # Seasonal (ортогональный календарный сигнал)
+    "seasonal": seasonal.seasonal_gas,
+    "seasonal_vt": seasonal.seasonal_gas_voltarget,
+    "donch_seasonal": seasonal.donchian_seasonal,
+    "donch_seasonal_vt": seasonal.donchian_seasonal_voltarget,
     # OU (осторожно: не автономна, для сравнения)
     "ou": ou_zscore,
 }
@@ -81,6 +87,7 @@ def run_strategy_on_basket(
     end: str,
     interval: str = "1d",
     cost: float = 0.0002,
+    yearly: bool = False,
 ) -> pd.DataFrame:
     """Прогоняет стратегию по всей корзине, возвращает сводную таблицу.
 
@@ -92,6 +99,8 @@ def run_strategy_on_basket(
         end: Дата конца.
         interval: Таймфрейм ('1d', '4h', ...).
         cost: Издержки.
+        yearly: Печатать ли годовую разбивку return/DD по каждому
+            инструменту (флаг --yearly).
 
     Returns:
         DataFrame сводки: инструмент, доходность, DD, Sharpe, проходит DD.
@@ -112,8 +121,12 @@ def run_strategy_on_basket(
             "sharpe": res.sharpe,
             "passes_dd": res.passes_dd(),
         })
-        print(f"  {name:14s} {_verdict(res)}  "
-              f"Sharpe {res.sharpe:+.2f}")
+        if yearly:
+            yb = yearly_breakdown(res.equity, res.bars_per_year)
+            print("\n" + format_yearly_table(yb, f"{name} ({ticker})"))
+        else:
+            print(f"  {name:14s} {_verdict(res)}  "
+                  f"Sharpe {res.sharpe:+.2f}")
     return pd.DataFrame(rows)
 
 
@@ -157,6 +170,10 @@ def main() -> None:
     parser.add_argument("--interval", default="1d")
     parser.add_argument("--cost", type=float, default=0.0002)
     parser.add_argument(
+        "--yearly", action="store_true",
+        help="Годовая разбивка return/DD по каждому инструменту",
+    )
+    parser.add_argument(
         "--panel-dir", default="data/panels",
         help="Каталог parquet-панелей для --source databento "
              "(H4: data/panels_4h)",
@@ -180,7 +197,7 @@ def main() -> None:
           f"{args.source} | {args.interval} | {args.start}..{args.end}{RESET}")
     df = run_strategy_on_basket(
         strategy_fn, basket, source, args.start, args.end,
-        args.interval, args.cost,
+        args.interval, args.cost, yearly=args.yearly,
     )
     print_summary(df, args.strategy)
 

@@ -76,12 +76,16 @@ def donchian_breakout(
     pos = np.zeros(len(close))
     in_pos = False
     for i in range(len(close)):
-        # Вход close-confirmed, выход по интрадей-минимуму (аудит
-        # 2026-07): риск обязан видеть внутрибарный пробой канала.
+        # Аудит 3 (Gemini): выход и вход — НЕЗАВИСИМЫЕ блоки, не if/elif.
+        # На outside-баре (сильная волатильность) low мог пробить нижний
+        # канал, а close закрыться выше верхнего. С elif мы бы вышли и
+        # пропустили вход до следующего бара; двумя if — выходим по риску,
+        # затем тем же баром переоткрываемся по close-confirmed пробою.
+        # Порядок выход->вход даёт приоритет свежему входу.
+        if in_pos and not np.isnan(lo[i]) and low[i] < lo[i]:
+            in_pos = False
         if not in_pos and close[i] > up[i]:
             in_pos = True
-        elif in_pos and not np.isnan(lo[i]) and low[i] < lo[i]:
-            in_pos = False
         pos[i] = 1.0 if in_pos else 0.0
     return pd.Series(pos, index=bars.index)
 
@@ -154,23 +158,31 @@ def _donchian_4step(
       - Вход и докупки — по close (close-confirmed: требуем закрытия за
         уровнем, меньше ложных интрадей-проколов). Следующая ступень —
         когда close прошёл +0.5 ATR от последней докупки.
-      - Turtle-стоп: last_add_price − stop_atr*ATR — ПОДТЯГИВАЕТСЯ за
-        каждой докупкой (аудит 2026-07: раньше код держал стоп от
+      - Turtle-стоп: last_add_price − stop_atr*ENTRY_ATR — ПОДТЯГИВАЕТСЯ
+        за каждой докупкой (аудит 2026-07: раньше код держал стоп от
         первого входа вопреки собственному докстрингу; набранная
         пирамида ездила со стопом у самого низа).
+      - ATR ФИКСИРУЕТСЯ НА ВХОДЕ (аудит 2, Gemini): entry_atr = ATR бара
+        пробоя, и стоп/тейк/шаг докупки считаются по нему всю сделку.
+        Плавающий текущий atr_i дрейфовал сетку риска: при всплеске
+        волатильности стоп уезжал вниз (риск > запланированного — прямое
+        нарушение DD-дисциплины), при сжатии — тейк съезжал вниз и мог
+        сработать от падения волы, а не достижения цели. Так делали
+        оригинальные Черепахи: N фиксируется на входе. Это меняет числа
+        на реальных данных (сделки держатся дольше) — ре-валидация.
       - РИСК-ТРИГГЕРЫ ПО ЭКСТРЕМУМАМ (аудит 2026-07): стоп и нижний
         канал проверяются по low бара — интрадей-пробой виден, close-
         проверка его прятала. Тейк — по high (лимит-фиксация исполнилась
         бы внутри бара). Асимметрия осознанная: входы консервативные
         (close-confirmed), выходы быстрые (intraday). Исполнение всех
         сигналов остаётся по close следующего бара (движок, shift(1)).
-      - Take-profit (если use_take): при +take_atr*ATR от entry сбрасываем
-        верхнюю ступень ОДИН РАЗ на цикл позиции (one-shot). После тейка
-        пирамида ЗАМОРОЖЕНА до полного выхода — без заморозки докупка
-        через бар аннулировала бы тейк и возникала пила тейк<->докупка
-        с оборотом каждый бар (аудит 2026-07, критический баг).
+      - Take-profit (если use_take): при +take_atr*ENTRY_ATR от entry
+        сбрасываем верхнюю ступень ОДИН РАЗ на цикл позиции (one-shot).
+        После тейка пирамида ЗАМОРОЖЕНА до полного выхода — без заморозки
+        докупка через бар аннулировала бы тейк и возникала пила
+        тейк<->докупка с оборотом каждый бар (аудит 2026-07, крит. баг).
       - Полный выход: пробой нижнего канала ИЛИ стоп; сбрасывает всё
-        состояние, включая one-shot флаг.
+        состояние, включая one-shot флаг и entry_atr.
 
     Args:
         bars: Данные инструмента (high/low нужны реальные).
@@ -199,6 +211,7 @@ def _donchian_4step(
     steps_filled = 0          # сколько ступеней пирамиды набрано
     entry_price = 0.0         # цена первого входа (уровень тейка)
     last_add_price = 0.0      # цена последней докупки (стоп + ступень)
+    entry_atr = 0.0           # ATR бара пробоя — сетка риска сделки
     take_done = False         # one-shot: тейк уже забран в этом цикле
 
     n_steps = len(pyramid)
@@ -217,10 +230,11 @@ def _donchian_4step(
                 steps_filled = 1
                 entry_price = close[i]
                 last_add_price = close[i]
+                entry_atr = atr_i     # фиксируем волатильность пробоя
                 take_done = False
         else:
-            # Стоп подтягивается за последней докупкой.
-            stop_level = last_add_price - stop_atr * atr_i
+            # Сетка риска — по зафиксированному на входе entry_atr.
+            stop_level = last_add_price - stop_atr * entry_atr
             # Риск-выход по интрадей-минимуму: стоп или нижний канал.
             exit_hit = low[i] < stop_level or (
                 not np.isnan(lo[i]) and low[i] < lo[i]
@@ -229,6 +243,7 @@ def _donchian_4step(
                 steps_filled = 0
                 entry_price = 0.0
                 last_add_price = 0.0
+                entry_atr = 0.0
                 take_done = False
             elif not take_done:
                 # Take-profit по интрадей-максимуму: one-shot сброс
@@ -237,14 +252,14 @@ def _donchian_4step(
                     use_take
                     and take_atr is not None
                     and steps_filled > 1
-                    and high[i] > entry_price + take_atr * atr_i
+                    and high[i] > entry_price + take_atr * entry_atr
                 ):
                     steps_filled -= 1
                     take_done = True
-                # Докупка следующей ступени при +0.5 ATR от последней.
+                # Докупка следующей ступени при +0.5 ENTRY_ATR от последней.
                 elif (
                     steps_filled < n_steps
-                    and close[i] > last_add_price + 0.5 * atr_i
+                    and close[i] > last_add_price + 0.5 * entry_atr
                 ):
                     steps_filled += 1
                     last_add_price = close[i]

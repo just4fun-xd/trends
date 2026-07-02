@@ -102,7 +102,10 @@ tests/       test_core.py, test_strategies.py, test_regime.py
 | `ema_ensemble_voltarget` | equity | ✅ Чемпион акций (DD −21%, единственный EMA проходящий DD<40%) |
 | `donchian_est_macd_4step_take` | commodity | ✅ Чемпион сырья (эталон старого кода +5.2% / −12.1% / 15 из 19 — ре-валидация) |
 | `bollinger_rsi` | range | ✅ Baseline, комплементарна тренду (профит в боковые годы) |
+| `seasonal_gas` / `donchian_seasonal` | commodity | ✅ Ортогональный календарный сигнал (газ); ценен для ансамбля |
 | `ou_zscore` | range | ⚠️ Математика валидна, НЕ автономна — RANGE-нога роутера |
+| `dual_momentum_tilt/_regime/_volscaled` | research | 🔬 Воскрешение DM через механизм (hedged long-only, не MN) |
+| `zscore_spread_kalman` | research | 🔬 Kalman-бета валидна, но край парного трейдинга не подтверждён |
 | `ema_ensemble_long_short` | closed | ❌ Шорт на акциях = бета, не альфа |
 | `donchian_breakout_ls` | closed | ❌ L/S на сырье (−71%) |
 | `dual_momentum` | closed | ❌ Провал на обоих классах (ранг ≠ альфа) |
@@ -137,6 +140,10 @@ python -m tests.test_regime
 # Прогон стратегии по корзине (нужна сеть для yfinance).
 python -m runners.run_basket --strategy champion --basket commodity \
     --start 2021-01-01 --end 2026-01-01
+
+# Годовая разбивка return/DD по каждому инструменту (--yearly):
+python -m runners.run_basket --strategy champion --basket commodity \
+    --start 2021-01-01 --end 2026-01-01 --yearly
 
 # Выгрузка Databento (при расширении корзины).
 export DATABENTO_API_KEY=...

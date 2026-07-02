@@ -19,6 +19,7 @@ Donchian (проверяемо против прямого прогона).
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from core.bars import Bars
@@ -28,10 +29,45 @@ from strategies.donchian import donchian_champion_raw
 from strategies.ou import ou_zscore
 
 
+def _apply_position_buffer(
+    pos: pd.Series, buffer: float
+) -> pd.Series:
+    """Гистерезис на итоговой позиции: не ребалансируем на микро-сдвиги.
+
+    Обновляем применённую позицию, только когда она отходит от текущей
+    больше чем на buffer (абсолютная мёртвая зона). Гасит дрожание,
+    которое иначе платно через drift-turnover движок. buffer=0 ->
+    поведение не меняется (возвращаем как есть).
+
+    Args:
+        pos: Сырая итоговая позиция роутера.
+        buffer: Абсолютная мёртвая зона (0.05 = не трогаем, пока
+            |new - applied| <= 0.05). 0 -> выключено.
+
+    Returns:
+        Позиция после гистерезиса.
+    """
+    if buffer <= 0:
+        return pos
+    raw = pos.to_numpy()
+    out = np.zeros(len(raw))
+    applied = 0.0
+    for i in range(len(raw)):
+        v = raw[i]
+        if np.isnan(v):
+            out[i] = applied
+            continue
+        if abs(v - applied) > buffer:
+            applied = v
+        out[i] = applied
+    return pd.Series(out, index=pos.index)
+
+
 def regime_router(
     bars: Bars,
     detector: RegimeDetector | None = None,
     target_vol: float = 0.15,
+    position_buffer: float = 0.0,
 ) -> pd.Series:
     """Смешивает СЫРЫЕ стратегии по вероятностям режимов, затем один
     общий vol_target на итог.
@@ -48,16 +84,26 @@ def regime_router(
 
     Тождество сохранено: champion = raw · vol_size, поэтому под
     AlwaysTrendDetector роутер по-прежнему В ТОЧНОСТИ равен champion
-    (проверяется тестом).
+    (проверяется тестом) — при position_buffer=0.
 
-    Мягкое смешивание (не жёсткое переключение) — избегает рывков на
-    границе режимов.
+    ГИСТЕРЕЗИС ПОЗИЦИИ (аудит 4, Gemini; задел под HMM): position_buffer
+    гасит дрожание ИТОГОВОЙ позиции. Мотив верен: когда probs даёт
+    реальная HMM, они меняются каждый бар (0.60->0.63->0.58), и буфер
+    внутри vol_target_size это НЕ ловит — дрожат probs, а не размер.
+    Небуферизованный mixed микро-ребалансируется, drift-движок берёт
+    плату. По умолчанию 0 (поведение не меняется). ВАЖНО: это грубый
+    буфер на выходе; более правильный гистерезис режимов — dwell-time
+    на самих probs (не переключать режим, пока P устойчиво > порога N
+    баров), он не имеет проблемы знака на границе. Пойдёт вместе с
+    реализацией HMM (трек 2.2), где и появится источник дрожания.
 
     Args:
         bars: Данные инструмента.
         detector: Детектор режима. None -> AlwaysTrendDetector (роутер
             вырождается в чистый champion — база для sanity-чека).
         target_vol: Единый волатильностный бюджет итоговой позиции.
+        position_buffer: Мёртвая зона ребаланса итоговой позиции (0 ->
+            выключено; ~0.05 разумно для дрожащей HMM).
 
     Returns:
         position: смешанная позиция с единым риск-бюджетом.
@@ -76,4 +122,5 @@ def regime_router(
         + probs[Regime.RANGE.value] * range_raw
     )
     size = vol_target_size(bars, target_vol)
-    return (mixed * size).fillna(0.0)
+    pos = (mixed * size).fillna(0.0)
+    return _apply_position_buffer(pos, position_buffer)
