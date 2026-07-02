@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.bak
+.Python
+
+# Virtualenv
+venv/
+.venv/
+env/
+
+# Data (большие/покупные — не в git)
+data/
+*.csv
+!sp500_tickers.csv
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Локальные прогоны (если не хочешь их в истории)
+# results/*.txt
