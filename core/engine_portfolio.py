@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 
@@ -29,6 +30,9 @@ class PortfolioResult:
         max_drawdown: Худшая просадка портфеля (<= 0).
         weights: Применённая матрица весов (после shift).
         gross: Ряд валовой экспозиции (сумма |весов|) по времени.
+        bars_per_year: Баров в году для аннуализации Sharpe (честное
+            поле вместо magic-атрибута Series — pandas 3.0 CoW терял
+            атрибуты при копировании).
     """
 
     equity: pd.Series
@@ -36,6 +40,17 @@ class PortfolioResult:
     max_drawdown: float
     weights: pd.DataFrame
     gross: pd.Series
+    bars_per_year: float = 252.0
+
+    @property
+    def sharpe(self) -> float:
+        """Годовой Sharpe кривой капитала портфеля (безрисковая = 0)."""
+        rets = self.equity.pct_change().dropna()
+        if rets.std() == 0 or len(rets) < 2:
+            return 0.0
+        return float(
+            rets.mean() / rets.std() * np.sqrt(self.bars_per_year)
+        )
 
     def passes_dd(self, limit: float = 0.40) -> bool:
         """Проходит ли портфель лимит просадки.
@@ -61,9 +76,18 @@ def run_portfolio(
     Логика (векторно по всей матрице):
         returns   = prices.pct_change()            # доходность каждого
         pnl_t     = Σ_i weights[i].shift(1) * returns[i]
-        turnover  = Σ_i |Δ weights[i]|
+        drifted_i = w_i(1+r_i) / (1+pnl)           # вес после движения цен
+        turnover  = Σ_i |w_i,t − drifted_i,t-1|    # ребаланс против дрейфа
         strat     = pnl - turnover * cost
         equity    = (1 + strat).cumprod()
+
+    МОДЕЛЬ (аудит 2026-07): P&L-формула Σ w·r предполагает ежедневную
+    ребалансировку к целевым весам — значит, оборот обязан учитывать
+    дрейф. Старый diff() целевых весов давал нулевой оборот при
+    постоянном целевом весе, хотя удержание постоянной ДОЛИ NAV требует
+    ежедневного ребаланса против движения цен. Нормализация дрейфа
+    делит на (1+pnl) ДО издержек — издержки за бар ~bps, погрешность
+    нормализации второго порядка, пренебрежимо.
 
     Args:
         prices: Матрица цен close, индекс — даты, колонки — инструменты.
@@ -91,8 +115,12 @@ def run_portfolio(
     # P&L портфеля = построчная сумма вклад инструментов.
     pnl = (prev_w * returns).sum(axis=1)
 
-    # Оборот = сумма модулей изменения весов по инструментам.
-    turnover = prev_w.diff().abs().sum(axis=1).fillna(0.0)
+    # Дрейфовавшие веса к концу бара: w(1+r) на выросший NAV (1+pnl).
+    denom = (1.0 + pnl).where((1.0 + pnl).abs() > 1e-9)
+    drifted = prev_w.mul(1.0 + returns).div(denom, axis=0).shift(1)
+
+    # Оборот = ребаланс от дрейфовавших весов к новым целевым.
+    turnover = (prev_w - drifted.fillna(0.0)).abs().sum(axis=1).fillna(0.0)
 
     strat = pnl - turnover * cost
 
@@ -102,7 +130,6 @@ def run_portfolio(
 
     strat = strat.fillna(0.0)
     equity = (1.0 + strat).cumprod()
-    equity._bars_per_year = bars_per_year
 
     drawdown = equity / equity.cummax() - 1.0
     gross = prev_w.abs().sum(axis=1)
@@ -113,6 +140,7 @@ def run_portfolio(
         max_drawdown=float(drawdown.min()),
         weights=prev_w,
         gross=gross,
+        bars_per_year=bars_per_year,
     )
 
 

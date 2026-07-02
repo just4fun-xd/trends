@@ -59,7 +59,13 @@ def _percent_b(
 
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    """RSI без цикла (Wilder EMA сглаживание gain/loss).
+    """RSI без цикла (Wilder-сглаживание gain/loss, alpha=1/period).
+
+    Аудит 2026-07: раньше стояло ewm(span=period) — alpha 2/(n+1)~0.13
+    вместо канонического Wilder 1/n~0.07. RSI получался вдвое быстрее
+    классического, а пороги 30/50 калиброваны литературой под Wilder.
+    Теперь консистентно с bars.atr(), где Wilder-alpha был с самого
+    начала.
 
     Args:
         close: Ряд цен закрытия.
@@ -71,8 +77,8 @@ def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.ewm(span=period, adjust=False).mean()
-    avg_loss = loss.ewm(span=period, adjust=False).mean()
+    avg_gain = gain.ewm(alpha=1.0 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1.0 / period, adjust=False).mean()
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 

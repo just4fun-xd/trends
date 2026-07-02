@@ -17,7 +17,11 @@ import argparse
 
 import pandas as pd
 
-from core.config import COMMODITY_YF, EQUITY_BASKET
+from core.config import (
+    COMMODITY_DATABENTO,
+    COMMODITY_YF,
+    EQUITY_BASKET,
+)
 from core.engine import BacktestResult, run_engine
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
@@ -152,11 +156,24 @@ def main() -> None:
     parser.add_argument("--end", default="2026-01-01")
     parser.add_argument("--interval", default="1d")
     parser.add_argument("--cost", type=float, default=0.0002)
+    parser.add_argument(
+        "--panel-dir", default="data/panels",
+        help="Каталог parquet-панелей для --source databento "
+             "(H4: data/panels_4h)",
+    )
     args = parser.parse_args()
 
     source = (YFinanceSource() if args.source == "yf"
-              else DatabentoSource())
-    basket = (COMMODITY_YF if args.basket == "commodity" else EQUITY_BASKET)
+              else DatabentoSource(panel_dir=args.panel_dir))
+    # Нотация тикеров зависит от источника: yfinance ждёт 'CL=F',
+    # Databento-панели хранят корневые 'CL'. Для commodity+databento
+    # берём COMMODITY_DATABENTO (чистые символы), иначе yfinance-словари.
+    if args.basket == "equity":
+        basket = EQUITY_BASKET
+    elif args.source == "databento":
+        basket = {s: s for s in COMMODITY_DATABENTO}
+    else:
+        basket = COMMODITY_YF
     strategy_fn = STRATEGIES[args.strategy]
 
     print(f"{BOLD}Стратегия {args.strategy} | {args.basket} | "

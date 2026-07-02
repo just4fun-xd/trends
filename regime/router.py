@@ -22,47 +22,58 @@ from __future__ import annotations
 import pandas as pd
 
 from core.bars import Bars
+from core.engine import vol_target_size
 from regime.detector import AlwaysTrendDetector, Regime, RegimeDetector
-from strategies.donchian import donchian_est_macd_4step_take
+from strategies.donchian import donchian_champion_raw
 from strategies.ou import ou_zscore
 
 
 def regime_router(
     bars: Bars,
     detector: RegimeDetector | None = None,
-    prob_threshold: float = 0.5,
+    target_vol: float = 0.15,
 ) -> pd.Series:
-    """Смешивает стратегии по вероятностям режимов от детектора.
+    """Смешивает СЫРЫЕ стратегии по вероятностям режимов, затем один
+    общий vol_target на итог.
 
-    Позиция = взвешенная сумма стратегий по P(режим):
-        pos = P(TREND)·donchian + P(RANGE)·ou + P(CRISIS)·0
+    РИСК-ПАРИТЕТ РЕЖИМОВ (аудит 2026-07, критическая правка): раньше
+    роутер складывал разнокалиберные ноги — Дончиан приходил уже ужатый
+    внутренним vol targeting (~0.2-0.5), а OU лупил сырым ±1.0. В RANGE-
+    режиме роутер нёс в разы больше риска, чем в TREND. Теперь обе ноги
+    сырые [-1..1], а волатильностный бюджет накладывается ОДИН раз на
+    смешанный сигнал:
+
+        mixed = P(TREND)·donchian_raw + P(RANGE)·ou_raw    # CRISIS -> 0
+        pos   = mixed · vol_target_size(bars, target_vol)
+
+    Тождество сохранено: champion = raw · vol_size, поэтому под
+    AlwaysTrendDetector роутер по-прежнему В ТОЧНОСТИ равен champion
+    (проверяется тестом).
 
     Мягкое смешивание (не жёсткое переключение) — избегает рывков на
-    границе режимов. Каждая под-стратегия считается на всём ряду, затем
-    взвешивается вероятностью своего режима в каждый момент.
+    границе режимов.
 
     Args:
         bars: Данные инструмента.
         detector: Детектор режима. None -> AlwaysTrendDetector (роутер
-            вырождается в чистый Donchian — база для sanity-чека).
-        prob_threshold: Порог отсечки (режимы с P ниже игнорируются;
-            сейчас мягкое смешивание, порог зарезервирован под жёсткий
-            режим при необходимости).
+            вырождается в чистый champion — база для sanity-чека).
+        target_vol: Единый волатильностный бюджет итоговой позиции.
 
     Returns:
-        position: смешанная позиция по режимам.
+        position: смешанная позиция с единым риск-бюджетом.
     """
     if detector is None:
         detector = AlwaysTrendDetector()
 
     probs = detector.detect(bars)
 
-    trend_pos = donchian_est_macd_4step_take(bars)
-    range_pos = ou_zscore(bars)
+    trend_raw = donchian_champion_raw(bars)
+    range_raw = ou_zscore(bars)
     # CRISIS -> кэш (нулевая позиция), вклад ноль.
 
     mixed = (
-        probs[Regime.TREND.value] * trend_pos
-        + probs[Regime.RANGE.value] * range_pos
+        probs[Regime.TREND.value] * trend_raw
+        + probs[Regime.RANGE.value] * range_raw
     )
-    return mixed.fillna(0.0)
+    size = vol_target_size(bars, target_vol)
+    return (mixed * size).fillna(0.0)

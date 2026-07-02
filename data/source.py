@@ -111,8 +111,14 @@ class DataSource(abc.ABC):
         # 2. Нижний регистр имён колонок.
         df.columns = [str(c).lower() for c in df.columns]
 
-        # 3. Индекс -> DatetimeIndex, отсортирован.
+        # 3. Индекс -> DatetimeIndex, tz-aware приводим к naive UTC.
+        # Аудит 2026-07: докстринг обещал UTC, кода не было; интрадей-
+        # бары yfinance приходят tz-aware, и сравнение с naive
+        # Timestamp(end) ниже бросало TypeError — H4 ломался на первом
+        # живом прогоне.
         df.index = pd.to_datetime(df.index)
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_convert("UTC").tz_localize(None)
         df = df.sort_index()
 
         # Проверка обязательных колонок.

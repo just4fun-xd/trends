@@ -107,6 +107,67 @@ def test_portfolio_two_assets() -> None:
           f"dd={res.max_drawdown:.1%}")
 
 
+def test_drift_turnover() -> None:
+    """Drift-издержки (аудит 2026-07): дробный вес платит, полный — нет.
+
+    Регрессия на «иллюзию нулевого оборота»: формула diff() давала 0
+    издержек при постоянном целевом весе; drift-формула берёт плату за
+    ежедневный ребаланс дробной доли NAV против движения цены.
+    """
+    bars = _synth_bars()
+    # Полный вес 1.0: buy-and-hold, после входа издержек нет.
+    full = pd.Series(1.0, index=bars.index)
+    r_full_free = run_engine(bars, full, cost=0.0)
+    r_full_cost = run_engine(bars, full, cost=0.0002)
+    entry_only = r_full_free.total_return - r_full_cost.total_return
+    assert entry_only < 0.001, f"B&H платит лишнее: {entry_only:.4%}"
+    # Дробный вес 0.5: дрейф-ребаланс платный (раньше был бесплатным).
+    half = pd.Series(0.5, index=bars.index)
+    r_half_free = run_engine(bars, half, cost=0.0)
+    r_half_cost = run_engine(bars, half, cost=0.0002)
+    bleed = r_half_free.total_return - r_half_cost.total_return
+    assert bleed > 0, "Дробный вес не платит за дрейф-ребаланс"
+    print(f"  [ok] drift-издержки: B&H ~вход только "
+          f"({entry_only*1e4:.1f}bps), вес 0.5 платит {bleed*1e4:.1f}bps")
+
+
+def test_vol_target_buffer() -> None:
+    """Буфер ребалансировки гасит дрожание размера (аудит 2026-07)."""
+    bars = _synth_bars()
+    raw = vol_target_size(bars, buffer=0.0)
+    buf = vol_target_size(bars, buffer=0.10)
+    ch_raw = (raw.diff().abs() > 1e-12).sum()
+    ch_buf = (buf.diff().abs() > 1e-12).sum()
+    assert ch_buf < ch_raw * 0.5, (
+        f"Буфер не гасит дрожание: {ch_buf} vs {ch_raw}"
+    )
+    # Размеры остаются в окрестности сырых (буфер — мёртвая зона ±10%).
+    diff_rel = ((buf - raw).abs() / raw.replace(0, 1)).max()
+    assert diff_rel < 0.15
+    print(f"  [ok] буфер vol targeting: смен размера {ch_raw} -> {ch_buf}, "
+          f"откл. от сырого <= {diff_rel:.0%}")
+
+
+def test_result_carries_bars_per_year() -> None:
+    """bars_per_year — честное поле результата (не magic-атрибут).
+
+    Регрессия: pandas 3.0 CoW терял атрибут Series, Sharpe тихо считался
+    с 252 на H4-данных.
+    """
+    bars = _synth_bars()
+    h4 = Bars(open=bars.open, high=bars.high, low=bars.low,
+              close=bars.close, bars_per_year=1512.0, symbol="H4")
+    pos = pd.Series(0.5, index=bars.index)
+    r_d = run_engine(bars, pos, cost=0.0)
+    r_h = run_engine(h4, pos, cost=0.0)
+    assert r_d.bars_per_year == 252.0 and r_h.bars_per_year == 1512.0
+    # Одинаковые ряды, разный bpy -> Sharpe различается в sqrt(6) раз.
+    ratio = r_h.sharpe / r_d.sharpe
+    assert abs(ratio - np.sqrt(1512 / 252)) < 1e-6
+    print(f"  [ok] bars_per_year в результате: sharpe H4/D1 = {ratio:.3f} "
+          f"= sqrt(6)")
+
+
 if __name__ == "__main__":
     print("Тесты ядра:")
     test_bars_contract()
@@ -115,4 +176,7 @@ if __name__ == "__main__":
     test_vol_target()
     test_engines_agree()
     test_portfolio_two_assets()
+    test_drift_turnover()
+    test_vol_target_buffer()
+    test_result_carries_bars_per_year()
     print("Все тесты ядра пройдены.")

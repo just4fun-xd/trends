@@ -34,7 +34,7 @@ import pandas as pd
 
 
 def fetch_via_api(
-    symbols: list[str], start: str, end: str
+    symbols: list[str], start: str, end: str, schema: str = "ohlcv-1d"
 ) -> dict[str, pd.DataFrame]:
     """Тянет M1/M2 OHLCV из Databento API (реальная выгрузка).
 
@@ -42,6 +42,8 @@ def fetch_via_api(
         symbols: Корневые символы фьючерсов (CL, NG, ...).
         start: Дата начала.
         end: Дата конца.
+        schema: Схема Databento. 'ohlcv-1d' — дневные; 'ohlcv-1h' —
+            часовые (для H4 качаем часовые и ресемплим в build_panels).
 
     Returns:
         dict инструмент -> DataFrame с колонками
@@ -67,29 +69,33 @@ def fetch_via_api(
     out: dict[str, pd.DataFrame] = {}
     for sym in symbols:
         # Continuous front-month через smart-symbology Databento.
-        # dataset/schema зависят от подписки — здесь GLBX.MDP3 дневные бары.
+        # dataset/schema зависят от подписки; GLBX.MDP3 — CME futures.
         m1 = client.timeseries.get_range(
             dataset="GLBX.MDP3",
             symbols=[f"{sym}.c.0"],   # continuous front (M1)
             stype_in="continuous",
-            schema="ohlcv-1d",
+            schema=schema,
             start=start, end=end,
         ).to_df()
         m2 = client.timeseries.get_range(
             dataset="GLBX.MDP3",
             symbols=[f"{sym}.c.1"],   # continuous second (M2)
             stype_in="continuous",
-            schema="ohlcv-1d",
+            schema=schema,
             start=start, end=end,
         ).to_df()
         df = m1[["open", "high", "low", "close", "volume"]].copy()
         df["close_m2"] = m2["close"].reindex(df.index)
+        # Дубли граничных баров при склейке API-ответов — оставляем
+        # последний (аудит 2026-07).
+        df = df[~df.index.duplicated(keep="last")]
         out[sym] = df
     return out
 
 
 def demo_panels(
-    symbols: list[str], start: str, end: str, seed: int = 0
+    symbols: list[str], start: str, end: str, seed: int = 0,
+    interval: str = "1d",
 ) -> dict[str, pd.DataFrame]:
     """Синтетические панели той же СХЕМЫ — для локального теста офлайн.
 
@@ -102,16 +108,28 @@ def demo_panels(
         start: Дата начала.
         end: Дата конца.
         seed: Сид генератора.
+        interval: '1d' — дневная сетка; '4h' — часовая сетка (её потом
+            ресемплит build_panels), чтобы проверить H4-тракт офлайн.
 
     Returns:
         dict инструмент -> DataFrame схемы Databento.
     """
     rng = np.random.default_rng(seed)
-    idx = pd.bdate_range(start, end)
+    if interval == "4h":
+        # Часовая сетка по будним дням: 24 бара/день (как continuous
+        # futures ~круглосуточно). build_panels свернёт в 4H.
+        days = pd.bdate_range(start, end)
+        idx = pd.DatetimeIndex(
+            [d + pd.Timedelta(hours=h) for d in days for h in range(24)]
+        )
+        drift, vol = 0.0003 / 24, 0.014 / np.sqrt(24)
+    else:
+        idx = pd.bdate_range(start, end)
+        drift, vol = 0.0003, 0.014
     n = len(idx)
     out = {}
     for i, sym in enumerate(symbols):
-        steps = rng.normal(0.0003, 0.014, n)
+        steps = rng.normal(drift, vol, n)
         close = pd.Series(50 * (1 + i * 0.3) * np.exp(np.cumsum(steps)),
                           index=idx)
         spread = close * 0.01
@@ -128,8 +146,31 @@ def demo_panels(
     return out
 
 
+def _resample_symbol(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Ресемплит один инструмент OHLCV+M2 на крупный таймфрейм.
+
+    Часовые бары Databento -> H4: open=first, high=max, low=min,
+    close=last, volume=sum. close_m2 берётся последним в баре (для
+    carry важен уровень на конец периода, не сумма).
+
+    Args:
+        df: DataFrame одного инструмента (open/high/low/close/volume/
+            close_m2), индекс — DatetimeIndex часовых баров.
+        rule: pandas-правило ресемпла ('4h').
+
+    Returns:
+        Ресемпленный DataFrame той же схемы.
+    """
+    agg = {
+        "open": "first", "high": "max", "low": "min",
+        "close": "last", "volume": "sum", "close_m2": "last",
+    }
+    agg = {k: v for k, v in agg.items() if k in df.columns}
+    return df.resample(rule).agg(agg).dropna(subset=["close"])
+
+
 def build_panels(
-    data: dict[str, pd.DataFrame]
+    data: dict[str, pd.DataFrame], interval: str = "1d"
 ) -> dict[str, pd.DataFrame]:
     """Собирает выровненные панели из per-symbol DataFrame'ов.
 
@@ -138,14 +179,22 @@ def build_panels(
     провайдером (continuous contracts) — для сырых контрактов добавить
     backward-adjust здесь.
 
+    Если interval == '4h', часовые бары ресемплятся в 4H ДО выравнивания
+    (union-календарь тогда — сетка H4-таймстемпов, а не дней).
+
     Args:
         data: dict инструмент -> DataFrame (open/high/low/close/volume/
             close_m2).
+        interval: Целевой таймфрейм панелей. '1d' — как есть (данные уже
+            дневные); '4h' — ресемпл часовых баров в 4H.
 
     Returns:
         dict поле -> панель (даты × инструменты) для полей
         open/high/low/close/volume/rollyield/native.
     """
+    if interval == "4h":
+        data = {s: _resample_symbol(df, "4h") for s, df in data.items()}
+
     symbols = list(data.keys())
     # Union-календарь по всем инструментам.
     union_idx = None
@@ -171,7 +220,7 @@ def build_panels(
         carry[sym] = (aligned["close"] - aligned["close_m2"]) / aligned[
             "close_m2"
         ]
-        # native: день торговался, если close не NaN в исходном ряду.
+        # native: бар торговался, если close не NaN в исходном ряду.
         native[sym] = df["close"].reindex(union_idx).notna()
 
     panels["rollyield"] = carry
@@ -204,20 +253,28 @@ def main() -> None:
     parser.add_argument("--start", default="2015-01-01")
     parser.add_argument("--end", default="2025-01-01")
     parser.add_argument("--out", default="data/panels")
+    parser.add_argument("--interval", default="1d", choices=["1d", "4h"],
+                        help="Таймфрейм панелей: 1d или 4h (ресемпл 1h)")
     parser.add_argument("--demo", action="store_true",
                         help="Синтетические панели без API (тест труб)")
     args = parser.parse_args()
 
-    if args.demo:
-        print("ДЕМО-режим: синтетические панели (не для выводов).")
-        data = demo_panels(args.symbols, args.start, args.end)
-    else:
-        print(f"Выгрузка {len(args.symbols)} инструментов из Databento...")
-        data = fetch_via_api(args.symbols, args.start, args.end)
+    # Для H4 качаем часовые бары и ресемплим в build_panels.
+    schema = "ohlcv-1h" if args.interval == "4h" else "ohlcv-1d"
 
-    panels = build_panels(data)
+    if args.demo:
+        print(f"ДЕМО-режим ({args.interval}): синтетика (не для выводов).")
+        data = demo_panels(args.symbols, args.start, args.end,
+                           interval=args.interval)
+    else:
+        print(f"Выгрузка {len(args.symbols)} инструментов "
+              f"({args.interval}, schema={schema})...")
+        data = fetch_via_api(args.symbols, args.start, args.end, schema)
+
+    panels = build_panels(data, interval=args.interval)
     write_panels(panels, args.out)
-    print(f"Готово. Панели в {args.out}/ — DatabentoSource их прочитает.")
+    print(f"Готово. Панели ({args.interval}) в {args.out}/ — укажи этот "
+          f"каталог в DatabentoSource(panel_dir=...).")
 
 
 if __name__ == "__main__":

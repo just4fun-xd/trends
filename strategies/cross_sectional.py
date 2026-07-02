@@ -43,23 +43,37 @@ def _rank_weights(
     score: pd.DataFrame,
     top_frac: float = 0.2,
     market_neutral: bool = True,
+    rebalance_every: int = 21,
 ) -> pd.DataFrame:
     """Веса из ранга: лонг топ-фракции, (опц.) шорт дно-фракции.
+
+    Аудит 2026-07: ре-ранжирование теперь ПЕРИОДИЧНОЕ (раз в
+    rebalance_every баров, между датами веса удерживаются). Ежедневный
+    ре-ранг заставлял границу топ/дно-фракции дрожать (126-дневный
+    скор соседних имён почти равен), и с drift-aware издержками это
+    дрожание стало платным. Месячный ребаланс — стандарт momentum-
+    литературы.
 
     Args:
         score: Матрица скоров ранжирования (даты × инструменты).
         top_frac: Доля корзины в каждую ногу (0.2 = топ/дно 20%).
         market_neutral: True -> лонг топ + шорт дно (нейтраль);
             False -> только лонг топ (long-only).
+        rebalance_every: Период ребаланса в барах (21 ~ месяц);
+            1 = старое ежедневное поведение.
 
     Returns:
-        DataFrame весов. Каждая нога equal-weight, суммы нормированы.
+        DataFrame весов. Каждая нога equal-weight; между ребалансами
+        целевые веса удерживаются (ffill).
     """
-    weights = pd.DataFrame(0.0, index=score.index, columns=score.columns)
     n = score.shape[1]
     k = max(1, int(n * top_frac))
 
-    for date in score.index:
+    rebal_dates = score.index[::rebalance_every]
+    weights = pd.DataFrame(
+        0.0, index=rebal_dates, columns=score.columns
+    )
+    for date in rebal_dates:
         row = score.loc[date].dropna()
         if len(row) < 2 * k:
             continue
@@ -69,7 +83,8 @@ def _rank_weights(
         if market_neutral:
             shorts = ranked.index[-k:]
             weights.loc[date, shorts] = -1.0 / k
-    return weights
+    # Между ребалансами держим последние целевые веса.
+    return weights.reindex(score.index).ffill().fillna(0.0)
 
 
 def dual_momentum(
@@ -79,6 +94,7 @@ def dual_momentum(
     top_frac: float = 0.2,
     market_neutral: bool = True,
     abs_filter_sma: int | None = 200,
+    rebalance_every: int = 21,
 ) -> pd.DataFrame:
     """Cross-sectional dual momentum — ЗАКРЫТ отрицательно (документация).
 
@@ -99,7 +115,9 @@ def dual_momentum(
         Матрица весов для run_portfolio.
     """
     score = _momentum_score(prices, lookback, skip)
-    weights = _rank_weights(score, top_frac, market_neutral)
+    weights = _rank_weights(
+        score, top_frac, market_neutral, rebalance_every
+    )
 
     if abs_filter_sma is not None:
         # Не держим лонг, если цена ниже своей SMA (absolute trend gate).
@@ -115,6 +133,7 @@ def carry_rank(
     carry: pd.DataFrame,
     top_frac: float = 0.2,
     market_neutral: bool = True,
+    rebalance_every: int = 21,
 ) -> pd.DataFrame:
     """Ранжирование по carry (M1-M2)/M2 — ОТКРЫТЫЙ трек, не momentum.
 
@@ -133,7 +152,9 @@ def carry_rank(
         Матрица весов для run_portfolio.
     """
     # Высокий carry (backwardation) -> лонг; низкий (contango) -> шорт.
-    return _rank_weights(carry, top_frac, market_neutral)
+    return _rank_weights(
+        carry, top_frac, market_neutral, rebalance_every
+    )
 
 
 # --- ЗАГЛУШКА: Markowitz + Momentum (трек 1.2) ---

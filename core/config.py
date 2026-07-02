@@ -17,7 +17,12 @@ COMMODITY_YF = {
     "Wheat": "ZW=F", "Corn": "ZC=F", "Soybeans": "ZS=F",
     "Soybean Oil": "ZL=F", "Soybean Meal": "ZM=F",
     "Coffee": "KC=F", "Cocoa": "CC=F", "Sugar": "SB=F",
-    "Cotton": "CT=F", "Palladium": "PA=F", "Zinc": "ZN=F",
+    "Cotton": "CT=F", "Palladium": "PA=F", "Platinum": "PL=F",
+    # Аудит 2026-07: раньше стоял "Zinc": "ZN=F" — но ZN=F на Yahoo это
+    # 10-Year T-Note futures, НЕ цинк (у цинка LME-листинг, нормального
+    # yf-тикера нет). Казначейские ноты сидели в commodity-корзине под
+    # видом металла. Заменён на платину. Сверить состав корзины со
+    # старым проектом перед сравнением портфельных чисел!
 }
 
 # Equity-корзина (19 US large-cap) — чистые бары, без roll-проблемы.

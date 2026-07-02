@@ -78,6 +78,11 @@ def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:
     """
     mean = series.rolling(window).mean()
     std = series.rolling(window).std()
+    # Аудит 2026-07: вырожденное окно (std~0: плоские склейки, limit-дни)
+    # маскируем в NaN. Подстановка малого eps вместо нуля дала бы
+    # z ~ 1e8 из float-шума числителя -> ложный сигнал на мёртвом рынке.
+    # NaN означает «нет нового сигнала»; цикл ниже держит состояние.
+    std = std.where(std > 1e-12)
     return (series - mean) / std
 
 
@@ -115,6 +120,11 @@ def ou_zscore(
     state = 0
     for i in range(len(z)):
         if np.isnan(z[i]):
+            # Аудит 2026-07: NaN = «нет нового сигнала», ДЕРЖИМ текущее
+            # состояние. Раньше continue пропускал присвоение pos[i] ->
+            # позиция проваливалась в 0 на один бар посреди сделки ->
+            # фантомный выход-вход и двойные издержки.
+            pos[i] = float(state)
             continue
         if state == 0:
             if z[i] < -entry_z:

@@ -62,20 +62,32 @@ def ema_cross_stop(
     ef = bars.close.ewm(span=fast, adjust=False).mean()
     es = bars.close.ewm(span=slow, adjust=False).mean()
     bull = (ef > es).values
+    low = bars.low.values
     close = bars.close.values
     pos = np.zeros(len(close))
     entry = 0.0
     in_pos = False
+    stopped = False  # реарм: после стопа ждём сброса сигнала
     for i in range(len(close)):
         if in_pos:
-            if close[i] <= entry * (1 - stop) or not bull[i]:
-                in_pos = False  # стоп или сигнал закрылся
+            # Аудит 2026-07: стоп триггерится по интрадей low (close-
+            # проверка прятала внутрибарный пробой), и после стопа вход
+            # заблокирован до сброса bull — раньше код перевходил В ТОМ
+            # ЖЕ баре, и стоп лишь сбрасывал entry, не закрывая позицию.
+            if low[i] <= entry * (1 - stop):
+                in_pos = False
+                stopped = True
+            elif not bull[i]:
+                in_pos = False
             else:
                 pos[i] = 1.0
-        if not in_pos and bull[i]:
-            in_pos = True
-            entry = close[i]
-            pos[i] = 1.0
+        else:
+            if stopped and not bull[i]:
+                stopped = False  # сигнал сбросился — реарм
+            if not stopped and bull[i]:
+                in_pos = True
+                entry = close[i]
+                pos[i] = 1.0
     return pd.Series(pos, index=bars.index)
 
 

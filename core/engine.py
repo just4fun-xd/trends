@@ -4,14 +4,18 @@
 проекте, где живёт shift(1) — защита от look-ahead. Стратегия возвращает
 «сырую» позицию (числовой ряд: 1.0 = полный лонг, 0 = кэш, дробное при
 vol targeting, отрицательное = шорт). Движок сам сдвигает и считает.
-Стратегия НЕ может это обойти — контракт узкий.
 
-Отличие от старого движка: аннуализация волатильности берёт bars_per_year
-из Bars, а не хардкодит 252. Это делает H4/интрадей (требование 5)
-корректным без спец-веток: на дневных 252, на H4 ~1512, формула одна.
+МОДЕЛЬ ИСПОЛНЕНИЯ (зафиксирована явно, аудит 2026-07):
+  - Позиция = доля NAV, ребалансируемая к целевой КАЖДЫЙ бар.
+  - Формула P&L (equity *= 1 + pos*r) валидна ТОЛЬКО при ежедневной
+    ребалансировке — значит, оборот обязан учитывать дрейф весов.
+  - Оборот_t = |target_t − drifted_{t-1}|, где drifted — вчерашний вес
+    после движения цены: w(1+r)/(1+w·r). Для w=1.0 дрейф нулевой
+    (buy-and-hold бесплатен), для дробных весов ребаланс платный.
+    Старая формула diff() занижала издержки при дробных позициях.
 
-Контракт возврата тот же: (equity, total_return, max_drawdown). Числа из
-старых .md должны воспроизводиться бит-в-бит — это тест миграции.
+Аннуализация волатильности берёт bars_per_year из Bars, а не хардкодит
+252 — H4/интрадей корректны без спец-веток.
 """
 
 from __future__ import annotations
@@ -33,6 +37,10 @@ class BacktestResult:
         total_return: Итоговая доходность за период (equity[-1] - 1).
         max_drawdown: Худшая просадка от вершины (<= 0).
         position: Фактически применённая позиция (после shift).
+        bars_per_year: Баров в году — для аннуализации Sharpe. Хранится
+            честным полем, а не magic-атрибутом Series (pandas 3.0 CoW
+            терял атрибут при копировании -> Sharpe тихо считался с 252
+            на H4-данных).
         symbol: Инструмент.
     """
 
@@ -40,20 +48,16 @@ class BacktestResult:
     total_return: float
     max_drawdown: float
     position: pd.Series
+    bars_per_year: float = 252.0
     symbol: str = ""
 
     @property
     def sharpe(self) -> float:
-        """Годовой Sharpe кривой капитала (безрисковая = 0).
-
-        Использует bars_per_year, зашитый при расчёте (см. run_engine,
-        где Sharpe кладётся в атрибут кривой). Здесь — из daily-ряда.
-        """
+        """Годовой Sharpe кривой капитала (безрисковая = 0)."""
         rets = self.equity.pct_change().dropna()
         if rets.std() == 0 or len(rets) < 2:
             return 0.0
-        bpy = getattr(self.equity, "_bars_per_year", 252.0)
-        return float(rets.mean() / rets.std() * np.sqrt(bpy))
+        return float(rets.mean() / rets.std() * np.sqrt(self.bars_per_year))
 
     def passes_dd(self, limit: float = 0.40) -> bool:
         """Проходит ли жёсткий лимит максимальной просадки.
@@ -67,6 +71,34 @@ class BacktestResult:
         return abs(self.max_drawdown) <= limit
 
 
+def drift_turnover(prev_pos: pd.Series, returns: pd.Series) -> pd.Series:
+    """Оборот с учётом дрейфа веса (общая формула для обоих движков).
+
+    Вчерашний целевой вес w за день дрейфует до w(1+r)/(1+w·r)
+    (позиция выросла на r, NAV — на w·r). Сегодняшний оборот — расстояние
+    от нового целевого веса до этого дрейфовавшего:
+
+        turnover_t = |prev_pos_t − drifted_{t-1}|
+
+    Свойства: w=1.0 -> drifted=1.0 -> buy-and-hold бесплатен; w=0 ->
+    бесплатен; вход 0->w платит |w|; удержание дробного w платит
+    ~|w(1-w)r| в день (ребаланс против дрейфа).
+
+    Args:
+        prev_pos: Применяемая позиция (уже после shift(1)).
+        returns: Побарные доходности инструмента.
+
+    Returns:
+        Ряд оборота >= 0.
+    """
+    denom = 1.0 + prev_pos * returns
+    # denom -> 0 означает потерю ~100% NAV за бар — за пределами
+    # осмысленного бэктеста; защищаемся от численного взрыва.
+    denom = denom.where(denom.abs() > 1e-9)
+    drifted = (prev_pos * (1.0 + returns) / denom).shift(1)
+    return (prev_pos - drifted.fillna(0.0)).abs().fillna(0.0)
+
+
 def run_engine(
     bars: Bars,
     position: pd.Series,
@@ -77,8 +109,8 @@ def run_engine(
 
     Единственная точка shift(1) в проекте. Логика:
         returns  = close.pct_change()
-        strat    = returns * position.shift(1)   # торгуем по вчера
-        strat   -= turnover * cost               # издержки на смену позиции
+        strat    = returns * position.shift(1)     # торгуем по вчера
+        strat   -= drift_turnover(...) * cost      # издержки с дрейфом
         equity   = (1 + strat).cumprod()
         drawdown = equity / equity.cummax() - 1
 
@@ -102,8 +134,7 @@ def run_engine(
     returns = bars.returns()
     prev_pos = position.shift(1).fillna(0.0)
 
-    # Оборот = |изменение позиции|; издержки платятся при входе/выходе/ресайзе.
-    turnover = prev_pos.diff().abs().fillna(0.0)
+    turnover = drift_turnover(prev_pos, returns)
 
     strat = returns * prev_pos - turnover * cost
 
@@ -114,7 +145,6 @@ def run_engine(
 
     strat = strat.fillna(0.0)
     equity = (1.0 + strat).cumprod()
-    equity._bars_per_year = bars.bars_per_year  # для Sharpe
 
     drawdown = equity / equity.cummax() - 1.0
 
@@ -123,6 +153,7 @@ def run_engine(
         total_return=float(equity.iloc[-1] - 1.0),
         max_drawdown=float(drawdown.min()),
         position=prev_pos,
+        bars_per_year=bars.bars_per_year,
         symbol=bars.symbol,
     )
 
@@ -132,6 +163,7 @@ def vol_target_size(
     target_vol: float = 0.15,
     lookback: int = 30,
     max_leverage: float = 2.0,
+    buffer: float = 0.10,
 ) -> pd.Series:
     """Множитель размера позиции для таргетирования волатильности.
 
@@ -139,20 +171,42 @@ def vol_target_size(
     аннуализируется через bars.bars_per_year — корректно на любом
     таймфрейме (252 дневные, ~1512 H4), формула одна.
 
+    БУФЕР РЕБАЛАНСИРОВКИ (аудит 2026-07): сырой множитель дрожит каждый
+    бар вместе с rolling std, и с drift-aware издержками это дрожание
+    платное («смерть от тысячи порезов»). Поэтому применённый размер
+    обновляется до сырого ТОЛЬКО когда расхождение превышает buffer
+    (относительно применённого). buffer=0 возвращает старое непрерывное
+    поведение. Вводит состояние -> цикл; look-ahead нет (только прошлое).
+
     Vol targeting масштабирует риск И доходность одним множителем — не
-    создаёт прибыль, только меняет масштаб (вывод EMA-трека). Настоящая
-    сила — на уровне портфеля (выравнивает вклад инструментов).
+    создаёт прибыль, только меняет масштаб (вывод EMA-трека).
 
     Args:
         bars: Данные инструмента.
         target_vol: Целевая годовая волатильность (0.15 = 15%).
         lookback: Окно оценки реализованной волатильности.
         max_leverage: Потолок множителя (защита от деления на ~0 vol).
+        buffer: Мёртвая зона ребалансировки (0.10 = не трогаем позицию,
+            пока новый размер в пределах ±10% от применённого).
 
     Returns:
         Ряд множителей размера [0, max_leverage].
     """
-    daily_vol = bars.returns().rolling(lookback).std()
-    annual_vol = daily_vol * np.sqrt(bars.bars_per_year)
-    size = (target_vol / annual_vol).clip(upper=max_leverage)
-    return size.fillna(0.0)
+    bar_vol = bars.returns().rolling(lookback).std()
+    annual_vol = bar_vol * np.sqrt(bars.bars_per_year)
+    raw = (target_vol / annual_vol).clip(upper=max_leverage)
+    raw_v = raw.to_numpy()
+
+    out = np.zeros(len(raw_v))
+    applied = 0.0
+    for i in range(len(raw_v)):
+        r = raw_v[i]
+        if np.isnan(r):
+            out[i] = applied  # прогрев: держим текущее (0 в начале)
+            continue
+        if applied == 0.0:
+            applied = r
+        elif abs(r - applied) > buffer * abs(applied):
+            applied = r
+        out[i] = applied
+    return pd.Series(out, index=bars.index)
