@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+data/__pycache__/
 *.py[cod]
 *.bak
 .Python
@@ -10,7 +11,7 @@ venv/
 env/
 
 # Data (большие/покупные — не в git)
-data/
+data/panels/
 *.csv
 !sp500_tickers.csv
 
