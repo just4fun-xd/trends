@@ -34,10 +34,13 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 
 import pandas as pd
 
 from scripts import panels_common as pc
+from scripts.fetch_resilient import fetch_symbols_cached
+
 
 DATASET = "GLBX.MDP3"
 
@@ -46,15 +49,17 @@ DEFAULT_SYMBOLS = ["CL", "NG", "GC", "SI", "HG", "ZW", "ZC"]
 
 def fetch_via_api(
     symbols: list[str], start: str, end: str, schema: str = "ohlcv-1d",
+    cache_dir: str | None = None,
 ) -> dict[str, pd.DataFrame]:
-    """Тянет M1/M2 OHLCV из Databento (GLBX.MDP3, continuous).
+    """Тянет M1/M2 OHLCV из Databento устойчиво: per-symbol кэш + retry.
 
     Args:
         symbols: Корневые символы фьючерсов (CL, NG, ...).
         start: Дата начала.
         end: Дата конца.
-        schema: 'ohlcv-1d' — дневные; 'ohlcv-1h' — часовые (для H4,
-            ресемпл в build_panels).
+        schema: 'ohlcv-1d' — дневные; 'ohlcv-1h' — часовые (для H4).
+        cache_dir: Каталог сырого per-symbol кэша (raw/{sym}.parquet).
+            None -> без кэша (в память, как раньше).
 
     Returns:
         dict инструмент -> DataFrame (open/high/low/close/volume/
@@ -77,29 +82,12 @@ def fetch_via_api(
         ) from exc
 
     client = db.Historical(api_key)
-    out: dict[str, pd.DataFrame] = {}
-    for sym in symbols:
-        m1 = client.timeseries.get_range(
-            dataset=DATASET,
-            symbols=[f"{sym}.c.0"],   # continuous front (M1)
-            stype_in="continuous",
-            schema=schema,
-            start=start, end=end,
-        ).to_df()
-        m2 = client.timeseries.get_range(
-            dataset=DATASET,
-            symbols=[f"{sym}.c.1"],   # continuous second (M2)
-            stype_in="continuous",
-            schema=schema,
-            start=start, end=end,
-        ).to_df()
-        df = m1[["open", "high", "low", "close", "volume"]].copy()
-        df["close_m2"] = m2["close"].reindex(df.index)
-        # Дубли граничных баров при склейке — оставляем последний
-        # (аудит 2026-07).
-        df = df[~df.index.duplicated(keep="last")]
-        out[sym] = df
-    return out
+    return fetch_symbols_cached(
+        client, symbols, start, end, schema,
+        dataset=DATASET,
+        cache_dir=Path(cache_dir) if cache_dir else None,
+        with_m2=True,
+    )
 
 
 def main() -> None:
@@ -121,7 +109,9 @@ def main() -> None:
     else:
         print(f"Выгрузка {len(args.symbols)} инструментов из {DATASET} "
               f"({args.interval}, schema={schema})...")
-        data = fetch_via_api(args.symbols, args.start, args.end, schema)
+        cache_dir = str(Path(args.out) / "raw")
+        data = fetch_via_api(args.symbols, args.start, args.end, schema,
+                             cache_dir=cache_dir)
 
     panels = pc.build_panels(data, interval=args.interval)
     pc.write_panels(panels, args.out)

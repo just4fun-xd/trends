@@ -39,9 +39,16 @@ EQUITY_BASKET = {
 EQUITY_OUTLIERS = ("TSLA", "NVDA")
 
 # Databento continuous futures (roll-adjusted, из parquet-панелей).
+# 2026-07: расширено до фактически выгруженной H4-корзины (12
+# инструментов; scripts/fetch_databento_futures.py --interval 4h).
+# Softs (KC/CC/SB — ICE, не GLBX.MDP3) и CT (нет данных на ключе) не
+# резолвятся этим трактом и сюда не входят. PA/PL присутствуют в
+# списке (валидны на дневках), но на H4 дают патологически низкое
+# покрытие (native < 15%, см. docs/REGIME_MAP.md) — вырезай их через
+# --exclude PA,PL при H4-прогонах.
 COMMODITY_DATABENTO = [
-    "CL", "NG", "GC", "SI", "HG", "ZW", "ZC",  # база 7-инстр.
-    # расширение до 20-30 добавляется через scripts/fetch_databento.py
+    "CL", "NG", "GC", "SI", "HG", "ZW", "ZC", "ZS", "ZL", "ZM",
+    "PA", "PL",
 ]
 
 # Индексы для GARCH vol-targeting (трек 3.1).

@@ -50,6 +50,7 @@ STRATEGIES = {
     "donchian_vt": donchian.donchian_ensemble_voltarget,
     "champion": donchian.donchian_est_macd_4step_take,  # champion commodity
     "4step_pyr": donchian.donchian_est_macd_4step_pyramid,
+    "donchian_est_pyr": donchian.donchian_ensemble_pyramid,
     # Bollinger / mean-rev
     "bb_rsi": bollinger.bollinger_rsi,
     "bb_rsi_vt": bollinger.bollinger_rsi_voltarget,
@@ -188,6 +189,11 @@ def main() -> None:
              "умолчанию выбирается по корзине: data/panels/futures "
              "(commodity) или data/panels/equities (equity).",
     )
+    parser.add_argument(
+        "--exclude", default=None,
+        help="Инструменты через запятую, исключить из корзины "
+             "(напр. тонкие H4-рынки: PA,PL)",
+    )
     args = parser.parse_args()
 
     panel_dir = args.panel_dir
@@ -205,6 +211,14 @@ def main() -> None:
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
         basket = COMMODITY_YF
+
+    if args.exclude:
+        drop = {s.strip() for s in args.exclude.split(",")}
+        removed = [k for k in basket if k in drop]
+        basket = {k: v for k, v in basket.items() if k not in drop}
+        if removed:
+            print(f"Исключены из корзины: {', '.join(removed)}")
+
     strategy_fn = STRATEGIES[args.strategy]
     if args.vt:
         base_fn = strategy_fn

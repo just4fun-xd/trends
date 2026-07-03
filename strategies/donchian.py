@@ -413,3 +413,86 @@ def donchian_breakout_ls(
             state = 0
         pos[i] = float(state)
     return pd.Series(pos, index=bars.index)
+
+
+def donchian_ensemble_pyramid(
+    bars: Bars,
+    pairs: list[tuple[int, int]] | None = None,
+    threshold: float = 0.5,
+    entry: int = 20,
+    exit_period: int = 10,
+    target_vol: float = 0.15,
+    max_pos: float = 2.0,
+    pyramid_atr: float = 1.5,
+    atr_period: int = 14
+) -> pd.Series:
+    """
+    Donchian breakout + EMA ensemble filter + pyramiding + vol targeting.
+    Адаптировано под инфраструктуру Bars и очищено от look-ahead багов.
+    """
+    if pairs is None:
+        pairs = [(5, 20), (10, 40), (20, 80), (40, 160), (64, 256)]
+
+    close_s = bars.close
+    high_s = bars.high
+    low_s = bars.low
+
+    votes = pd.DataFrame(index=close_s.index)
+    for fast, slow in pairs:
+        ema_fast = close_s.ewm(span=fast, adjust=False).mean()
+        ema_slow = close_s.ewm(span=slow, adjust=False).mean()
+        votes[f"{fast}/{slow}"] = (ema_fast > ema_slow).astype(int)
+
+    macro_bullish = votes.mean(axis=1) > threshold
+
+    up = high_s.rolling(entry).max().shift(1).values
+    lo = low_s.rolling(exit_period).min().shift(1).values
+
+    prev_close = close_s.shift(1)
+    tr = pd.concat([
+        high_s - low_s,
+        (high_s - prev_close).abs(),
+        (low_s - prev_close).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(atr_period).mean().values
+
+    close = close_s.values
+    high = high_s.values
+    low = low_s.values
+    macro = macro_bullish.values
+
+    pos = np.zeros(len(close))
+
+    in_position = False
+    pyramid_done = False
+    entry_price = 0.0
+    entry_atr = 0.0
+
+    for i in range(len(close)):
+        if in_position:
+            if not np.isnan(lo[i]) and low[i] < lo[i]:
+                in_position = False
+                pyramid_done = False
+                entry_price = 0.0
+                entry_atr = 0.0
+            else:
+                if (not pyramid_done and not np.isnan(entry_atr) and entry_atr > 0):
+                    if high[i] >= entry_price + pyramid_atr * entry_atr:
+                        pyramid_done = True
+
+        if not in_position:
+            if not np.isnan(up[i]) and close[i] > up[i] and macro[i]:
+                in_position = True
+                pyramid_done = False
+                entry_price = close[i]
+                entry_atr = atr[i]
+
+        if in_position:
+            pos[i] = 1.0 if pyramid_done else 0.5
+
+    raw_position = pd.Series(pos, index=close_s.index)
+
+    size = vol_target_size(bars, target_vol=target_vol)
+    size = size.clip(upper=max_pos)
+
+    return raw_position * size

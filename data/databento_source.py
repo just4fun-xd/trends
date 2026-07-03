@@ -109,7 +109,34 @@ class DatabentoSource(DataSource):
             cols[field] = panel[symbol]
 
         df = pd.DataFrame(cols)
-        df = df[(df.index >= pd.Timestamp(start))]
+
+        # Границы окна: 'start'/'end' приходят как обычные строки/
+        # tz-naive Timestamp, панель может быть tz-aware (H4/Databento
+        # хранит UTC). Прямое сравнение naive vs aware падает с
+        # TypeError. Приводим границы к tz индекса перед срезом.
+        #
+        # ВАЖНО (правка): раньше здесь фильтровался только НИЖНИЙ
+        # порог (df.index >= start) — верхняя граница 'end' не
+        # применялась вовсе, и load() молча отдавал все бары после
+        # end, включая будущее относительно запрошенного окна. Для
+        # anchored walk-forward это риск утечки данных train-окна за
+        # его границу. Теперь режем по обеим сторонам.
+        start_ts = pd.Timestamp(start)
+        end_ts = pd.Timestamp(end)
+        if df.index.tz is not None:
+            start_ts = (start_ts.tz_localize(df.index.tz)
+                        if start_ts.tz is None
+                        else start_ts.tz_convert(df.index.tz))
+            end_ts = (end_ts.tz_localize(df.index.tz)
+                      if end_ts.tz is None
+                      else end_ts.tz_convert(df.index.tz))
+        elif start_ts.tz is not None or end_ts.tz is not None:
+            # Панель наивна, границы пришли с tz — приводим границы
+            # к наивным (редкий путь, но симметрично защищаемся).
+            start_ts = start_ts.tz_localize(None)
+            end_ts = end_ts.tz_localize(None)
+
+        df = df[(df.index >= start_ts) & (df.index <= end_ts)]
         return df
 
     def load_carry(self, symbols: list[str]) -> pd.DataFrame:
