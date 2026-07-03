@@ -224,6 +224,107 @@ def test_champion_stop_on_reversal() -> None:
           f"(удержал DD40)")
 
 
+def test_entry_atr_frozen() -> None:
+    """Регрессия (аудит Gemini): сетка риска фиксируется на входе.
+
+    Прямая проверка инварианта: строим ряд, где после входа ATR РАСТЁТ.
+    С плавающим atr_i стоп-уровень last_add - stop_atr*atr уползал бы
+    вниз вместе с растущим ATR (риск > запланированного). С фиксированным
+    entry_atr стоп держится узким и выбивает на умеренном откате.
+
+    Дискриминирующий сценарий: спокойный вход (низкий ATR), затем серия
+    расширяющихся баров поднимает текущий ATR, и умеренный откат. С
+    фиксированным ATR откат пробивает узкий стоп; с плавающим — стоп уже
+    уехал ниже отката и позиция ложно выжила бы.
+    """
+    n = 120
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    close = np.full(n, 100.0)
+    for i in range(1, 40):                # спокойный вход, узкий ATR
+        close[i] = close[i - 1] + 0.4
+    # После входа — расширяющиеся бары (растёт текущий ATR), цена почти
+    # стоит, потом умеренный откат.
+    for i in range(40, 70):
+        close[i] = close[i - 1] + (0.1 if i % 2 else -0.1)
+    close[70:] = close[69] - 2.2          # умеренный откат
+    close = pd.Series(close, index=idx)
+    high = close + 0.15
+    low = close - 0.15
+    # Расширяем диапазон баров 40-69 -> текущий ATR растёт после входа.
+    for i in range(40, 70):
+        high.iloc[i] = close.iloc[i] + 1.5
+        low.iloc[i] = close.iloc[i] - 1.5
+    low.iloc[70] = close.iloc[70] - 0.15
+    bars = Bars(open=close.shift(1).bfill(), high=high, low=low,
+                close=close, bars_per_year=252.0, symbol="ATRFRZ")
+
+    # Считаем оба уровня стопа руками на баре отката (70).
+    atr = bars.atr(20)
+    entry_bar = 39                        # примерно бар входа
+    entry_atr = atr.iloc[entry_bar]
+    current_atr = atr.iloc[70]
+    # ATR действительно вырос после входа (иначе тест не дискриминирует).
+    assert current_atr > entry_atr * 1.5, (
+        f"ATR не вырос: entry={entry_atr:.2f} current={current_atr:.2f}"
+    )
+    raw = donchian._donchian_4step(
+        bars, 20, 30, 20, 2.0, take_atr=None, use_take=False
+    )
+    # На баре входа пирамида набралась.
+    assert raw.iloc[40:69].max() > 0.39, "Позиция не открылась"
+    # С фиксированным узким entry_atr стоп выбивает на откате бара 70.
+    # (С плавающим широким ATR стоп уехал бы ниже и позиция выжила бы.)
+    assert (raw.iloc[71:] == 0.0).all(), (
+        "Стоп не выбил на откате — сетка риска поехала за текущим ATR"
+    )
+    print(f"  [ok] entry_atr зафиксирован: entry_atr={entry_atr:.2f} < "
+          f"current_atr={current_atr:.2f}, стоп по УЗКОМУ входному ATR "
+          f"выбил на откате")
+
+
+def test_outside_bar_reopens_same_bar() -> None:
+    """Регрессия (аудит Gemini): outside-bar переоткрывает в том же баре.
+
+    Бар пробивает нижний канал (low < lo -> выход) И закрывается выше
+    верхнего (close > up -> вход). С if/elif мы бы вышли и пропустили
+    вход до следующего бара. С двумя независимыми if — выходим по риску,
+    затем тем же баром переоткрываемся. Проверяем: после outside-бара
+    позиция снова 1.0 (а не 0 до следующего бара).
+    """
+    n = 60
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    close = np.full(n, 100.0)
+    for i in range(1, 30):           # рост, входим в позицию
+        close[i] = close[i - 1] + 0.6
+    close[30:40] = close[29]         # короткое плато
+    # Бар 40 — outside: НОВЫЙ пик close (выше 20-дневного max -> вход),
+    # но длинный нижний хвост пробивает exit-канал (low < lo -> выход).
+    close[40] = close[29] + 2.0      # свежий максимум закрытия
+    close[41:] = close[40]
+    close = pd.Series(close, index=idx)
+    high = close + 0.2
+    low = close - 0.2
+    low.iloc[40] = close.iloc[40] - 12.0    # длинный хвост вниз
+    high.iloc[40] = close.iloc[40] + 0.2
+    bars = Bars(open=close.shift(1).bfill(), high=high, low=low,
+                close=close, bars_per_year=252.0, symbol="OUTSIDE")
+
+    pos = donchian.donchian_breakout(bars, entry=20, exit_period=10)
+    # Дискриминация: на баре 40 low пробил нижний канал И close дал новый
+    # максимум выше верхнего канала. Проверим оба условия выполнимы.
+    from strategies.donchian import _donchian_channels
+    up, lo = _donchian_channels(bars, 20, 10)
+    assert bars.low.iloc[40] < lo.iloc[40], "low не пробил канал (тест)"
+    assert bars.close.iloc[40] > up.iloc[40], "close не выше up (тест)"
+    # С двумя if позиция на баре 40 = 1.0 (вышли по риску, зашли по close).
+    # С if/elif была бы дыра pos[40]==0 до следующего бара.
+    assert pos.iloc[40] == 1.0, (
+        "Outside-бар оставил дыру — вход не переоткрылся в том же баре"
+    )
+    print("  [ok] outside-bar: вышли по риску и переоткрылись тем же "
+          "баром (нет пропущенного бара на входе)")
+
+
 def test_meanrev_beats_trend_in_range() -> None:
     """В боковике BB+RSI профитнее трендового Дончиана
     (комплементарность — ключевой тезис проекта)."""
@@ -273,6 +374,8 @@ if __name__ == "__main__":
     test_champion_identity_raw_times_vol()
     test_champion_pyramids_on_trend()
     test_champion_stop_on_reversal()
+    test_entry_atr_frozen()
+    test_outside_bar_reopens_same_bar()
     test_meanrev_beats_trend_in_range()
     test_percent_b_redundant()
     test_ema_stop_no_same_bar_reentry()

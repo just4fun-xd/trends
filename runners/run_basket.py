@@ -27,6 +27,7 @@ from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
 from strategies import bollinger, donchian, ema, seasonal
+from strategies.meanrev_lab import MEANREV_LAB
 from strategies.ou import ou_zscore
 
 # ANSI-цвета. Выравнивание встраивается ДО escape-кодов (иначе f-string
@@ -60,6 +61,9 @@ STRATEGIES = {
     # OU (осторожно: не автономна, для сравнения)
     "ou": ou_zscore,
 }
+# Лаборатория mean-reversion (10 вариантов bb_rsi, см. дисклеймер
+# в strategies/meanrev_lab.py про multiple testing).
+STRATEGIES.update(MEANREV_LAB)
 
 
 def _verdict(res: BacktestResult, dd_limit: float = 0.40) -> str:
@@ -170,18 +174,28 @@ def main() -> None:
     parser.add_argument("--interval", default="1d")
     parser.add_argument("--cost", type=float, default=0.0002)
     parser.add_argument(
+        "--vt", action="store_true",
+        help="Обернуть стратегию vol-таргетингом "
+             "(position * vol_target_size)",
+    )
+    parser.add_argument(
         "--yearly", action="store_true",
         help="Годовая разбивка return/DD по каждому инструменту",
     )
     parser.add_argument(
-        "--panel-dir", default="data/panels",
-        help="Каталог parquet-панелей для --source databento "
-             "(H4: data/panels_4h)",
+        "--panel-dir", default=None,
+        help="Каталог parquet-панелей для --source databento. По "
+             "умолчанию выбирается по корзине: data/panels/futures "
+             "(commodity) или data/panels/equities (equity).",
     )
     args = parser.parse_args()
 
+    panel_dir = args.panel_dir
+    if panel_dir is None:
+        panel_dir = ("data/panels/equities" if args.basket == "equity"
+                     else "data/panels/futures")
     source = (YFinanceSource() if args.source == "yf"
-              else DatabentoSource(panel_dir=args.panel_dir))
+              else DatabentoSource(panel_dir=panel_dir))
     # Нотация тикеров зависит от источника: yfinance ждёт 'CL=F',
     # Databento-панели хранят корневые 'CL'. Для commodity+databento
     # берём COMMODITY_DATABENTO (чистые символы), иначе yfinance-словари.
@@ -192,6 +206,12 @@ def main() -> None:
     else:
         basket = COMMODITY_YF
     strategy_fn = STRATEGIES[args.strategy]
+    if args.vt:
+        base_fn = strategy_fn
+
+        def strategy_fn(bars):  # noqa: F811
+            from core.engine import vol_target_size
+            return base_fn(bars) * vol_target_size(bars)
 
     print(f"{BOLD}Стратегия {args.strategy} | {args.basket} | "
           f"{args.source} | {args.interval} | {args.start}..{args.end}{RESET}")

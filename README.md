@@ -145,13 +145,33 @@ python -m runners.run_basket --strategy champion --basket commodity \
 python -m runners.run_basket --strategy champion --basket commodity \
     --start 2021-01-01 --end 2026-01-01 --yearly
 
-# Выгрузка Databento (при расширении корзины).
+# Выгрузка Databento: два sleeve, два скрипта (общий тракт в
+# scripts/panels_common.py).
 export DATABENTO_API_KEY=...
-python -m scripts.fetch_databento --symbols CL NG GC SI HG ZW ZC \
-    --start 2015-01-01 --end 2025-01-01
+python -m scripts.fetch_databento_futures \
+    --symbols CL NG GC SI HG ZW ZC \
+    --start 2015-01-01 --end 2025-01-01     # -> data/panels/futures
+python -m scripts.fetch_databento_equities \
+    --start 2015-01-01 --end 2025-01-01     # -> data/panels/equities
+# Перед первой equities-выгрузкой проверь глубину истории:
+python -m scripts.fetch_databento_equities --check-range
 
-# Демо-панели для теста Databento-пути без API-ключа.
-python -m scripts.fetch_databento --demo
+# Демо-панели без API-ключа (тест труб):
+python -m scripts.fetch_databento_futures --demo
+python -m scripts.fetch_databento_equities --demo
+
+# Кросс-секционные стратегии (dual momentum, carry) — ОТДЕЛЬНЫЙ раннер
+# (посерийный run_basket их не гоняет — архитектурная граница):
+python -m runners.run_xs --strategy dual_regime --basket equity \
+    --start 2021-01-01 --end 2026-01-01 --yearly
+
+# Kalman-пары (research) — свой раннер (нужны ДВА инструмента):
+python -m runners.run_pairs --a CL=F --b BZ=F --yearly
+
+# Лаборатория mean-reversion: 10 вариантов bb_rsi (mr_*), любой можно
+# обернуть vol-таргетингом флагом --vt:
+python -m runners.run_basket --strategy mr_atr_stop --vt \
+    --basket commodity --start 2021-01-01 --end 2026-01-01 --yearly
 ```
 
 ## Расчёт на H4-данных

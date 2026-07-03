@@ -10,8 +10,8 @@ pyarrow>=14.0        # parquet-панели Databento
 yfinance>=0.2.40     # equity + commodity ETF, дневные и интрадей
 databento>=0.34      # continuous futures (только для scripts/fetch_databento)
 
-# Будущие мат-модели (треки в разработке — раскомментировать при реализации).
-# statsmodels>=0.14  # OU OLS, GARCH, коинтеграция
+# Мат-модели.
+statsmodels>=0.14  # ADF-тест стационарности в ou_fit (аудит Gemini)
 # scipy>=1.11        # оптимизация Markowitz, wavelet
 # hmmlearn>=0.3      # HMM regime detection (трек 2.2)
 

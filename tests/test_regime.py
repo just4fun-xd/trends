@@ -153,6 +153,82 @@ def test_ou_nan_flat_segment() -> None:
           f"({inner.iloc[0]:+.0f} все 35 баров), equity конечна")
 
 
+def test_router_position_buffer() -> None:
+    """Регрессия (аудит Gemini): гистерезис позиции гасит дрожание.
+
+    Под дрожащим детектором (probs скачут каждый бар) position_buffer
+    должен уменьшить число смен итоговой позиции. При buffer=0 поведение
+    не меняется (тождество с champion под AlwaysTrend сохраняется).
+    """
+    bars = _trend_bars()
+    # buffer=0 не меняет тождество router==champion.
+    routed0 = regime_router(bars, AlwaysTrendDetector(),
+                            position_buffer=0.0)
+    direct = donchian_est_macd_4step_take(bars)
+    assert (routed0 - direct).abs().max() < 1e-9, (
+        "buffer=0 сломал тождество router==champion"
+    )
+
+    # Дрожащий детектор: probs шумят вокруг 0.5 каждый бар.
+    class JitterDetector(RegimeDetector):
+        def detect(self, b: Bars) -> pd.DataFrame:
+            rng = np.random.default_rng(7)
+            p = 0.5 + rng.normal(0, 0.05, len(b))
+            p = np.clip(p, 0, 1)
+            df = pd.DataFrame(0.0, index=b.index,
+                              columns=[r.value for r in Regime])
+            df[Regime.TREND.value] = p
+            df[Regime.RANGE.value] = 1 - p
+            return df
+
+    det = JitterDetector()
+    raw = regime_router(bars, det, position_buffer=0.0)
+    buf = regime_router(bars, det, position_buffer=0.05)
+    ch_raw = (raw.diff().abs() > 1e-9).sum()
+    ch_buf = (buf.diff().abs() > 1e-9).sum()
+    assert ch_buf < ch_raw, (
+        f"Буфер не гасит дрожание: {ch_buf} vs {ch_raw}"
+    )
+    print(f"  [ok] position_buffer: смен позиции {ch_raw} -> {ch_buf} "
+          f"под дрожащим детектором; buffer=0 хранит тождество")
+
+
+def test_ou_adf_rejects_random_walk() -> None:
+    """Регрессия (аудит Gemini): ADF-фильтр отсекает random walk.
+
+    Смещение Дики-Фуллера: OLS занижает b на конечной выборке, поэтому
+    на чистом random walk (истинное b=0) знак theta почти всегда даёт
+    ложное mean-reversion. ADF-фильтр обязан их отсеять. Проверяем на
+    выборке из 50 random walk, что доля ложных срабатываний близка к
+    номинальному alpha (не 90%+, как было бы без фильтра).
+    """
+    try:
+        import statsmodels  # noqa: F401
+    except ImportError:
+        print("  [skip] statsmodels не установлен — ADF-фильтр пропущен")
+        return
+    false_pos = 0
+    for s in range(50):
+        rng = np.random.default_rng(s + 500)
+        rw = pd.Series(np.cumsum(rng.normal(0, 1, 500)))
+        if ou_fit(rw)["well_defined"]:
+            false_pos += 1
+    rate = false_pos / 50
+    assert rate < 0.20, (
+        f"ADF пропускает {rate:.0%} random walk — фильтр не работает"
+    )
+    # И настоящий OU по-прежнему проходит.
+    rng = np.random.default_rng(0)
+    x = np.zeros(500)
+    x[0] = 100
+    for i in range(1, 500):
+        x[i] = x[i - 1] + 0.1 * (100 - x[i - 1]) + rng.normal(0, 1.5)
+    fit = ou_fit(pd.Series(x))
+    assert fit["well_defined"], "ADF ложно отсёк настоящий OU"
+    print(f"  [ok] ADF-фильтр: random walk ложно проходит {rate:.0%} "
+          f"(было ~94%), настоящий OU проходит (p={fit['adf_pvalue']:.3f})")
+
+
 def test_ou_math_valid() -> None:
     """ou_fit восстанавливает half-life на синтетич. OU-ряде."""
     bars = _ou_series(theta=0.1)
@@ -238,6 +314,8 @@ if __name__ == "__main__":
     test_router_degenerates_to_champion()
     test_router_risk_parity_in_range()
     test_ou_nan_flat_segment()
+    test_ou_adf_rejects_random_walk()
+    test_router_position_buffer()
     test_ou_math_valid()
     test_ou_profits_in_range()
     test_hmm_stub_raises()
