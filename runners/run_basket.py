@@ -27,6 +27,7 @@ from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
 from strategies import bollinger, donchian, ema, seasonal
+from strategies.ensemble import ENSEMBLES
 from strategies.meanrev_lab import MEANREV_LAB
 from strategies.ou import ou_zscore
 
@@ -65,6 +66,9 @@ STRATEGIES = {
 # Лаборатория mean-reversion (10 вариантов bb_rsi, см. дисклеймер
 # в strategies/meanrev_lab.py про multiple testing).
 STRATEGIES.update(MEANREV_LAB)
+# Ансамбли уровня сигнала: MR-ансамбль и trend+MR комбо
+# (strategies/ensemble.py). Сырые сигналы — VT снаружи (--vt).
+STRATEGIES.update(ENSEMBLES)
 
 
 def _verdict(res: BacktestResult, dd_limit: float = 0.40) -> str:
@@ -177,7 +181,17 @@ def main() -> None:
     parser.add_argument(
         "--vt", action="store_true",
         help="Обернуть стратегию vol-таргетингом "
-             "(position * vol_target_size)",
+             "(position * sizer(bars), см. --sizer)",
+    )
+    parser.add_argument(
+        "--sizer", default="realized",
+        choices=["realized", "garch"],
+        help="Оценка волы для --vt: rolling realized (статус-кво) "
+             "или GARCH(1,1) прогноз (core/garch.py)",
+    )
+    parser.add_argument(
+        "--target-vol", type=float, default=0.15,
+        help="Целевая годовая волатильность для --vt",
     )
     parser.add_argument(
         "--yearly", action="store_true",
@@ -221,14 +235,18 @@ def main() -> None:
 
     strategy_fn = STRATEGIES[args.strategy]
     if args.vt:
+        from core.sizing import make_sizer
         base_fn = strategy_fn
+        sizer = make_sizer(args.sizer, target_vol=args.target_vol)
 
         def strategy_fn(bars):  # noqa: F811
-            from core.engine import vol_target_size
-            return base_fn(bars) * vol_target_size(bars)
+            return base_fn(bars) * sizer(bars)
 
+    vt_note = (f" | vt:{args.sizer}@{args.target_vol:.0%}"
+               if args.vt else "")
     print(f"{BOLD}Стратегия {args.strategy} | {args.basket} | "
-          f"{args.source} | {args.interval} | {args.start}..{args.end}{RESET}")
+          f"{args.source} | {args.interval}{vt_note} | "
+          f"{args.start}..{args.end}{RESET}")
     df = run_strategy_on_basket(
         strategy_fn, basket, source, args.start, args.end,
         args.interval, args.cost, yearly=args.yearly,

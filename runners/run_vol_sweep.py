@@ -47,6 +47,10 @@ def main() -> None:
     parser.add_argument("--vols", nargs="+", type=float,
                         default=[0.15, 0.25, 0.35, 0.50],
                         help="Уровни target_vol для перебора")
+    parser.add_argument("--sizer", default="realized",
+                        choices=["realized", "garch"],
+                        help="Оценка волы в знаменателе VT: "
+                             "rolling realized или GARCH(1,1)")
     parser.add_argument("--max-lev", type=float, default=6.0,
                         help="Потолок плеча (поднят, чтобы не упереться "
                              "раньше DD)")
@@ -69,7 +73,8 @@ def main() -> None:
     signal_fn = STRATEGIES[args.strategy]
 
     print(f"{BOLD}Vol-sweep {args.strategy} | {args.basket} | "
-          f"{args.source} | {args.start}..{args.end}{RESET}")
+          f"{args.source} | sizer={args.sizer} | "
+          f"{args.start}..{args.end}{RESET}")
     bars_by_symbol = {}
     for name, ticker in basket.items():
         try:
@@ -85,19 +90,33 @@ def main() -> None:
     df = vol_sweep_basket(
         bars_by_symbol, signal_fn, tuple(args.vols),
         max_lev_cap=args.max_lev, cost=args.cost,
+        sizer_name=args.sizer,
     )
     print("\n" + format_sweep(df, args.strategy))
 
-    # Рабочий уровень: макс. доход среди прошедших DD<40%.
+    # Рабочий уровень по ДВУМ критериям: worst-case и портфельному.
     passing = df[df["passes_dd"]]
     if not passing.empty:
         best_tv = passing["mean_return"].idxmax()
         best = passing.loc[best_tv]
-        print(f"\n{BOLD}Рекомендация:{RESET} target_vol ≈ {best_tv:.0%} "
-              f"-> доход {best['mean_return']:+.1%}, DD "
-              f"{best['worst_dd']:+.1%} (макс. доход в пределах DD<40%)")
+        print(f"\n{BOLD}Worst-case критерий:{RESET} target_vol ≈ "
+              f"{best_tv:.0%} -> доход {best['mean_return']:+.1%}, "
+              f"worstDD {best['worst_dd']:+.1%}")
     else:
-        print(f"\n{RED}Ни один уровень не прошёл DD<40%.{RESET}")
+        print(f"\n{RED}Ни один уровень не прошёл worst-case "
+              f"DD<40%.{RESET}")
+    p_passing = df[df["port_passes_dd"]]
+    if not p_passing.empty:
+        best_tv = p_passing["port_return"].idxmax()
+        best = p_passing.loc[best_tv]
+        print(f"{BOLD}Портфельный критерий:{RESET}  target_vol ≈ "
+              f"{best_tv:.0%} -> портфель {best['port_return']:+.1%}, "
+              f"портDD {best['port_dd']:+.1%}, Sharpe "
+              f"{best['port_sharpe']:+.2f} (диверсификация по корзине "
+              f"даёт запас риска сверх worst-case)")
+    else:
+        print(f"{RED}Портфельный DD<40% не пройден ни на одном "
+              f"уровне.{RESET}")
 
 
 if __name__ == "__main__":

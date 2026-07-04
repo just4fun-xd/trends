@@ -476,7 +476,8 @@ def donchian_ensemble_pyramid(
                 entry_price = 0.0
                 entry_atr = 0.0
             else:
-                if (not pyramid_done and not np.isnan(entry_atr) and entry_atr > 0):
+                if (not pyramid_done and not np.isnan(entry_atr)
+                        and entry_atr > 0):
                     if high[i] >= entry_price + pyramid_atr * entry_atr:
                         pyramid_done = True
 

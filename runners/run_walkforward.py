@@ -69,6 +69,9 @@ def main() -> None:
                         help="Нарезка окон: year / half / число дней")
     parser.add_argument("--vt", action="store_true",
                         help="Обернуть стратегию vol-таргетингом")
+    parser.add_argument("--sizer", default="realized",
+                        choices=["realized", "garch"],
+                        help="Оценка волы для --vt")
     parser.add_argument("--panel-dir", default=None)
     parser.add_argument("--exclude", default=None,
                         help="Инструменты через запятую, исключить из "
@@ -112,11 +115,12 @@ def main() -> None:
             continue
         fn = STRATEGIES[strat_name]
         if args.vt:
+            from core.sizing import make_sizer
             base_fn = fn
+            sizer = make_sizer(args.sizer)
 
-            def fn(bars, _b=base_fn):  # noqa: E731
-                from core.engine import vol_target_size
-                return _b(bars) * vol_target_size(bars)
+            def fn(bars, _b=base_fn, _s=sizer):  # noqa: E731
+                return _b(bars) * _s(bars)
 
         matrix, _ = walk_forward_basket(
             bars_by_symbol, fn, args.cost, args.by
@@ -130,7 +134,8 @@ def main() -> None:
         port["max_dd"] = 0.0  # нейтрально: вердикт по return-стабильности
         metrics = consistency_metrics(port)
 
-        label = f"{strat_name}{' +VT' if args.vt else ''}"
+        vt_tag = f' +VT({args.sizer})' if args.vt else ''
+        label = f"{strat_name}{vt_tag}"
         print("\n" + format_consistency(label, metrics))
         if args.matrix:
             print("\n" + format_matrix(

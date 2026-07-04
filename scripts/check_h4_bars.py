@@ -28,7 +28,7 @@ def main() -> None:
     bpy = len(s) / years
     print(f"лет: {years:.2f}")
     print(f"ФАКТИЧЕСКИЙ bars_per_year: {bpy:.0f}")
-    print(f"раннер использует: 1512")
+    print("раннер использует: 1512")
     print(f"поправка Sharpe: sqrt({bpy:.0f}/1512) = "
           f"{(bpy / 1512) ** 0.5:.3f}")
 

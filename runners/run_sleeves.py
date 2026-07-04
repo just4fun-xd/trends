@@ -40,7 +40,8 @@ import pandas as pd
 
 from core.config import (
     COMMODITY_DATABENTO, COMMODITY_YF, EQUITY_BASKET)
-from core.engine import run_engine, vol_target_size
+from core.engine import run_engine
+from core.sizing import make_sizer
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
@@ -57,7 +58,8 @@ BASKETS = {"commodity": COMMODITY_YF, "equity": EQUITY_BASKET}
 
 def sleeve_returns(
     strategy_fn, basket: dict, source, start: str, end: str,
-    use_vt: bool, cost: float = 0.0002, interval: str = "1d",
+    sizer_name: str | None, cost: float = 0.0002,
+    interval: str = "1d",
 ) -> pd.Series:
     """Дневные доходности sleeve'а: equal-weight по корзине.
 
@@ -67,12 +69,14 @@ def sleeve_returns(
         source: DataSource.
         start: Начало периода.
         end: Конец периода.
-        use_vt: Оборачивать ли позицию vol_target_size.
+        sizer_name: None (сырой сигнал), 'realized' или 'garch' —
+            сайзер из core.sizing, накладываемый на позицию.
         cost: Издержки движка.
 
     Returns:
         Ряд побарных доходностей sleeve'а (после издержек).
     """
+    sizer = make_sizer(sizer_name) if sizer_name else None
     per_inst = {}
     for name, ticker in basket.items():
         try:
@@ -81,8 +85,8 @@ def sleeve_returns(
             print(f"  {YELLOW}пропуск {name} ({ticker}): {exc}{RESET}")
             continue
         pos = strategy_fn(bars)
-        if use_vt:
-            pos = pos * vol_target_size(bars)
+        if sizer is not None:
+            pos = pos * sizer(bars)
         res = run_engine(bars, pos, cost=cost)
         per_inst[name] = res.equity.pct_change()
     if not per_inst:
@@ -138,8 +142,9 @@ def main() -> None:
     """CLI sleeve-комбинатора."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--sleeve", action="append", required=True,
-                   help="strategy:basket[:vt], например "
-                        "champion:commodity или bb_rsi:commodity:vt")
+                   help="strategy:basket[:vt|:garch], например "
+                        "champion:commodity, bb_rsi:commodity:vt "
+                        "или mr_ens:commodity:garch")
     p.add_argument("--source", default="yf",
                    choices=["yf", "databento"])
     p.add_argument("--panel-dir", default=None,
@@ -185,7 +190,15 @@ def main() -> None:
     for spec in args.sleeve:
         parts = spec.split(":")
         strat, basket_name = parts[0], parts[1]
-        use_vt = len(parts) > 2 and parts[2] == "vt"
+        # Третье поле: vt (realized) или garch — сайзер sleeve'а.
+        sizer_name = None
+        if len(parts) > 2:
+            sizer_name = {"vt": "realized", "garch": "garch"}.get(
+                parts[2])
+            if sizer_name is None:
+                raise SystemExit(
+                    f"неизвестный сайзер {parts[2]!r} в {spec!r} "
+                    f"(допустимо: vt, garch)")
         fn = STRATEGIES.get(strat)
         if fn is None:
             raise SystemExit(f"нет стратегии '{strat}' в реестре")
@@ -195,7 +208,7 @@ def main() -> None:
         label = spec.replace(":", "_")
         print(f"Sleeve {label} ({args.source}, {args.interval}) ...")
         cols[label] = sleeve_returns(
-            fn, basket, src, args.start, args.end, use_vt,
+            fn, basket, src, args.start, args.end, sizer_name,
             args.cost, interval=args.interval,
         )
     sleeves = pd.DataFrame(cols).fillna(0.0)
