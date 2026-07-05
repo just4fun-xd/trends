@@ -41,7 +41,15 @@ import pandas as pd
 from core.config import (
     COMMODITY_DATABENTO, COMMODITY_YF, EQUITY_BASKET)
 from core.engine import run_engine
-from core.sizing import make_sizer
+from core.sizing import (
+    breakeven_funding_rate,
+    make_sizer,
+    portfolio_vol_target,
+)
+from diagnostics.port_lev_sweep import (
+    format_leverage_sweep,
+    leverage_sweep,
+)
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
@@ -161,6 +169,22 @@ def main() -> None:
                    help="фиксированные веса через запятую")
     p.add_argument("--parity", action="store_true",
                    help="trailing inverse-vol веса (без look-ahead)")
+    p.add_argument("--port-vol", type=float, default=None,
+                   help="портфельный vol-таргетинг комбо: довести "
+                        "волу КОМБО до цели плечом (напр. 0.20). "
+                        "Конвертирует Sharpe в доходность; без него "
+                        "комбо работает на ~5%% риск-бюджета.")
+    p.add_argument("--max-port-lev", type=float, default=4.0,
+                   help="потолок портфельного плеча для --port-vol")
+    p.add_argument("--lev-sweep", action="store_true",
+                   help="перебрать сетку target_vol x кэп плеча на "
+                        "реальной кривой комбо и найти максимум в "
+                        "рамках DD<40%% (вместо одной точки --port-vol)")
+    p.add_argument("--funding-rate", type=float, default=0.0,
+                   help="годовая ставка фондирования ЗАЁМНОЙ части "
+                        "плеча (напр. 0.05 = 5%%/год), применяется в "
+                        "--port-vol и --lev-sweep. Типично 0.04-0.08. "
+                        "0.0 (default) = верхняя граница без costs.")
     p.add_argument("--cost", type=float, default=0.0002)
     args = p.parse_args()
 
@@ -246,6 +270,9 @@ def main() -> None:
     print(f"  Доходность: {m['ret']:+.1%}")
     print(f"  Max DD:     {m['dd']:.1%}")
     print(f"  Sharpe:     {m['sharpe']:+.2f}")
+    realized_vol = float(combo.std() * (252.0 ** 0.5))
+    print(f"  Годовая вола комбо: {realized_vol:.1%} "
+          f"(доля лимита DD<40%: ~{realized_vol / 0.40:.0%})")
     dd_ok = abs(m["dd"]) < 0.40
     mark = f"{GREEN}да{RESET}" if dd_ok else f"{RED}НЕТ{RESET}"
     print(f"  Проходит DD<40%: {mark}")
@@ -253,6 +280,69 @@ def main() -> None:
     eq = (1.0 + combo).cumprod()
     yb = yearly_breakdown(eq, 252.0)
     print("\n" + format_yearly_table(yb, "Комбо по годам"))
+
+    if args.port_vol:
+        scaled, lev = portfolio_vol_target(
+            combo, target_vol=args.port_vol,
+            max_leverage=args.max_port_lev,
+            funding_rate=args.funding_rate,
+        )
+        ms = metrics(scaled)
+        print(f"\n{BOLD}=== КОМБО × портфельный VT@"
+              f"{args.port_vol:.0%} (плечо кэп "
+              f"{args.max_port_lev:.1f}) ==={RESET}")
+        print(f"  Доходность: {ms['ret']:+.1%}")
+        print(f"  Max DD:     {ms['dd']:.1%}")
+        print(f"  Sharpe:     {ms['sharpe']:+.2f}")
+        active = lev[lev > 0]
+        print(f"  Среднее плечо: "
+              f"{float(active.mean()) if len(active) else 0.0:.2f}")
+        dd_ok = abs(ms["dd"]) < 0.40
+        mark = f"{GREEN}да{RESET}" if dd_ok else f"{RED}НЕТ{RESET}"
+        print(f"  Проходит DD<40%: {mark}")
+        if args.funding_rate > 0:
+            print(f"  {GREEN}фондирование учтено: "
+                  f"{args.funding_rate:.1%}/год на заёмную часть "
+                  f"плеча{RESET}")
+        else:
+            print(f"  {YELLOW}издержки ног учтены их движками; "
+                  f"фондирование плеча НЕ учтено "
+                  f"(--funding-rate 0){RESET}")
+        eq_s = (1.0 + scaled).cumprod()
+        yb_s = yearly_breakdown(eq_s, 252.0)
+        print("\n" + format_yearly_table(
+            yb_s, f"Комбо VT@{args.port_vol:.0%} по годам"))
+
+    if args.lev_sweep:
+        print(f"\n{BOLD}=== Sweep потолка плеча: максимум в рамках "
+              f"DD<40% ==={RESET}")
+        grid = leverage_sweep(combo, funding_rate=args.funding_rate)
+        print(format_leverage_sweep(
+            grid, funding_rate=args.funding_rate))
+
+        is_futures = args.source == "databento"
+        be = breakeven_funding_rate(
+            combo, target_vol=0.20, max_leverage=args.max_port_lev,
+        )
+        print(f"\n{BOLD}Breakeven-ставка фондирования{RESET} "
+              f"(target_vol=20%, кэп={args.max_port_lev:.1f}): "
+              f"{be:.1%}/год")
+        print(f"  Выше этой ставки плечо {args.max_port_lev:.0f}x "
+              f"уже НЕ окупается на этих данных.")
+        if is_futures:
+            print(f"  {YELLOW}⚠ Это sleeve на ФЬЮЧЕРСАХ "
+                  f"(--source databento). Модель "
+                  f"funding_rate=займ-под-ставку НЕ описывает "
+                  f"механику фьючерсов (плечо там — маржа/гарантийное "
+                  f"обеспечение, не займ наличных; cost-of-carry уже "
+                  f"в цене контракта и учтён в P&L стратегии). Эта "
+                  f"breakeven-ставка отвечает на гипотетический "
+                  f"вопрос «как если бы это были акции на марже» — "
+                  f"не применяй её буквально к сырьевой ноге.{RESET}")
+        else:
+            print("  Модель margin-loan уместна для акций; "
+                  "институциональные ставки финансирования обычно "
+                  "ниже розничного брокерского маржин-рейта.")
 
 
 if __name__ == "__main__":

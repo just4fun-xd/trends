@@ -120,3 +120,178 @@ def test_garch_sizer_reacts_to_vol_regimes():
     hi = mult[rv > rv.quantile(0.8)].mean()
     lo = mult[rv < rv.quantile(0.2)].mean()
     assert hi < lo
+
+
+def test_trend_ensemble_bounds_and_registry():
+    from runners.run_basket import STRATEGIES
+    from strategies.ensemble import trend_ensemble
+    bars = _make_bars(seed=51, n=900, drift=0.0008)
+    pos = trend_ensemble(bars)
+    assert pos.index.equals(bars.index)
+    assert (pos >= -1e-9).all() and (pos <= 1.0 + 1e-9).all()
+    # На дрейфе ансамбль должен быть в лонге заметную долю времени.
+    assert pos.iloc[300:].mean() > 0.3
+    assert "trend_ens" in STRATEGIES
+
+
+def test_portfolio_vol_target_scales_and_no_lookahead():
+    from core.sizing import portfolio_vol_target
+    rng = np.random.default_rng(9)
+    # Тихий портфельный ряд ~3% годовой волы (как комбо после parity).
+    rets = pd.Series(
+        0.0002 + 0.002 * rng.standard_normal(1500),
+        index=pd.date_range("2019-01-02", periods=1500, freq="B"),
+    )
+    scaled, lev = portfolio_vol_target(rets, target_vol=0.10,
+                                       max_leverage=4.0)
+    raw_vol = rets.std() * np.sqrt(252)
+    new_vol = scaled.iloc[100:].std() * np.sqrt(252)
+    assert new_vol > raw_vol * 2          # вола реально поднята
+    assert abs(new_vol - 0.10) < 0.03     # и близка к цели
+    assert (lev <= 4.0 + 1e-9).all()      # кэп плеча
+    # Нет look-ahead: плечо бара t не зависит от rets[t]. Спайк
+    # абсолютный (0.05 >> сигма), чтобы вола окна гарантированно
+    # прыгнула и плечо слетело с кэпа на СЛЕДУЮЩЕМ баре.
+    rets2 = rets.copy()
+    rets2.iloc[500] = 0.05
+    _, lev2 = portfolio_vol_target(rets2, target_vol=0.10)
+    assert lev2.iloc[500] == lev.iloc[500]
+    assert lev2.iloc[501] != lev.iloc[501]
+
+
+def test_funding_rate_reduces_leveraged_return():
+    """Стоимость фондирования снижает доходность плечевого портфеля,
+    но не влияет на веса плеча (та же реализация вол-таргетинга)."""
+    from core.sizing import portfolio_vol_target
+    rng = np.random.default_rng(2)
+    n = 1000
+    rets = pd.Series(
+        0.0004 + 0.008 * rng.standard_normal(n),
+        index=pd.date_range("2019-01-02", periods=n, freq="B"),
+    )
+    free, lev_free = portfolio_vol_target(
+        rets, target_vol=0.25, max_leverage=6.0, funding_rate=0.0)
+    paid, lev_paid = portfolio_vol_target(
+        rets, target_vol=0.25, max_leverage=6.0, funding_rate=0.06)
+    # Плечо (веса позиции) не меняется от funding_rate.
+    pd.testing.assert_series_equal(lev_free, lev_paid)
+    # Доходность после funding строго ниже (при активном плече).
+    active = lev_free > 1.0 + 1e-9
+    assert (paid[active] < free[active]).mean() > 0.95
+
+
+def test_funding_only_charges_borrowed_portion():
+    """При leverage<=1 (нет займа) funding_rate не должен ничего
+    вычитать — платим только за (leverage-1), не за весь размер."""
+    from core.sizing import portfolio_vol_target
+    rng = np.random.default_rng(6)
+    n = 500
+    # Очень высокая вола -> target_vol легко достижим при leverage<1.
+    rets = pd.Series(
+        0.0 + 0.05 * rng.standard_normal(n),
+        index=pd.date_range("2019-01-02", periods=n, freq="B"),
+    )
+    free, lev = portfolio_vol_target(
+        rets, target_vol=0.05, max_leverage=6.0, funding_rate=0.0)
+    paid, lev2 = portfolio_vol_target(
+        rets, target_vol=0.05, max_leverage=6.0, funding_rate=0.06)
+    no_borrow = lev <= 1.0 + 1e-9
+    # Там, где плечо <=1 (нет займа), funding не должен менять доход.
+    if no_borrow.any():
+        assert np.allclose(
+            free[no_borrow].values, paid[no_borrow].values, atol=1e-12)
+
+
+def test_breakeven_funding_rate_bounds_and_monotonicity():
+    """breakeven возвращает ставку, разделяющую прибыль/убыток:
+    чуть ниже неё чистая доходность > 0, чуть выше < 0."""
+    from core.sizing import breakeven_funding_rate, portfolio_vol_target
+    rng = np.random.default_rng(41)
+    n = 1200
+    rets = pd.Series(
+        0.0003 + 0.006 * rng.standard_normal(n),
+        index=pd.date_range("2019-01-02", periods=n, freq="B"),
+    )
+    be = breakeven_funding_rate(rets, target_vol=0.25, max_leverage=4.0)
+    assert 0.0 < be < 0.50
+
+    def net(fr):
+        scaled, _ = portfolio_vol_target(
+            rets, target_vol=0.25, max_leverage=4.0, funding_rate=fr)
+        return float((1 + scaled).cumprod().iloc[-1] - 1.0)
+
+    assert net(max(be - 0.02, 0.0)) > 0
+    assert net(min(be + 0.02, 0.49)) < 0
+
+
+def test_breakeven_zero_when_already_unprofitable():
+    from core.sizing import breakeven_funding_rate
+    n = 500
+    # Чисто убыточный ряд без funding -> breakeven = 0.
+    rets = pd.Series(
+        -0.001, index=pd.date_range("2019-01-02", periods=n, freq="B"))
+    be = breakeven_funding_rate(rets, target_vol=0.20, max_leverage=4.0)
+    assert be == 0.0
+
+
+def test_breakeven_returns_hi_when_always_profitable():
+    from core.sizing import breakeven_funding_rate
+    rng = np.random.default_rng(50)
+    n = 1200
+    # Очень высокий Sharpe -> прибыльна даже при funding=hi.
+    rets = pd.Series(
+        0.003 + 0.003 * rng.standard_normal(n),
+        index=pd.date_range("2019-01-02", periods=n, freq="B"),
+    )
+    be = breakeven_funding_rate(
+        rets, target_vol=0.25, max_leverage=4.0, hi=0.10)
+    assert be == 0.10
+
+
+def test_member_contribution_loo_and_corr():
+    """LOO-диагностика: балласт (нулевой член) детектируется, вредный
+    член (антисигнал) даёт отрицательную delta, корреляционная
+    матрица содержит колонку ENSEMBLE."""
+    from diagnostics.member_contribution import member_contribution
+
+    # Сильный дрейф + фикс. сиды: always-long ловит дрейф целиком
+    # (детерминированно помогает), always-short — против дрейфа
+    # (детерминированно вредит). Momentum-члены тут непригодны:
+    # синтетика iid, у momentum нет edge, вклад ложится монеткой.
+    baskets = {f"S{i}": _make_bars(seed=200 + i, drift=0.0015)
+               for i in range(3)}
+
+    def good(bars):
+        return pd.Series(1.0, index=bars.index)
+
+    def zero(bars):
+        return pd.Series(0.0, index=bars.index)
+
+    def bad(bars):
+        return pd.Series(-1.0, index=bars.index)
+
+    members = {"good": good, "zero": zero, "bad": bad}
+    res = member_contribution(baskets, members, sizer=None)
+
+    assert set(res["solo"].index) == set(members)
+    assert set(res["loo"].index) == set(members)
+    assert "ENSEMBLE" in res["corr"].columns
+    # Нулевой член: соло-Sharpe ровно 0.
+    assert res["solo"].loc["zero", "sharpe"] == 0.0
+    # Антисигнал на дрейфе должен вредить ансамблю: без него лучше.
+    assert res["loo"].loc["bad", "delta"] < 0
+    # Хороший член должен помогать: без него хуже.
+    assert res["loo"].loc["good", "delta"] > 0
+
+
+def test_mr_kelt_confirm_registered_and_bounded():
+    from runners.run_basket import STRATEGIES
+    from strategies.ensemble import mr_keltner_confirm
+    bars = _make_bars(seed=71, n=800)
+    pos = mr_keltner_confirm(bars)
+    assert pos.index.equals(bars.index)
+    assert (pos >= -1e-9).all() and (pos <= 1.0 + 1e-9).all()
+    # Пара из двух бинарных членов -> значения кратны 0.5.
+    vals = set(np.unique(np.round(pos.values, 6)))
+    assert vals.issubset({0.0, 0.5, 1.0})
+    assert "mr_kelt_confirm" in STRATEGIES

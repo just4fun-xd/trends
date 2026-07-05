@@ -39,12 +39,16 @@ from pathlib import Path
 import pandas as pd
 
 from scripts import panels_common as pc
+from core.config import COMMODITY_DATABENTO
 from scripts.fetch_resilient import fetch_symbols_cached
 
 
 DATASET = "GLBX.MDP3"
 
-DEFAULT_SYMBOLS = ["CL", "NG", "GC", "SI", "HG", "ZW", "ZC"]
+# Дефолт = единый конфиг (2026-07d: был захардкожен список из 7 —
+# разъехался с COMMODITY_DATABENTO(12), панель вышла неполной,
+# ZS/ZL/ZM/PA/PL молча выпали из Databento-валидации).
+DEFAULT_SYMBOLS = list(COMMODITY_DATABENTO)
 
 
 def fetch_via_api(

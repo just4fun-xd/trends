@@ -39,6 +39,11 @@ from strategies.meanrev_lab import (
     mr_keltner,
     mr_time_stop,
 )
+from strategies.trend_lab import (
+    donchian_multi,
+    ewmac_forecast,
+    tsmom_multi,
+)
 
 # Дефолтный состав MR-ансамбля: варианты с ОБЩИМ входом-механизмом
 # (перепроданность) и РАЗНЫМИ механизмами выхода/фильтра — именно
@@ -93,7 +98,64 @@ def trend_mr_combo(
     return w_trend * trend + (1.0 - w_trend) * mr
 
 
+# Тренд-ансамбль (2026-07d): конкурс 9 моделей на двух источниках
+# показал кластер статистически неотличимых сигналов (86% окон на yf)
+# с ошибками в РАЗНЫЕ годы: 2023 donch_multi/ewmac в минусе, kama
+# Gold +16; tsmom_multi нестабилен одиночно на узкой корзине (71% на
+# Databento), но его срывы не совпадают с ewmac. Усреднение — тот же
+# приём, что в mr_ens: сигнал (momentum) общий, шум реализаций
+# декоррелирован. donchian_vt НЕ включён: у него встроенный VT —
+# смешивание отмасштабированной ноги с сырыми ломает единицы позиции.
+TREND_ENSEMBLE_MEMBERS = (
+    ewmac_forecast,   # непрерывная сила тренда (Carver)
+    tsmom_multi,      # мульти-горизонтный знак momentum
+    donchian_multi,   # пробой, диверсифицированный по lookback
+)
+
+
+def trend_ensemble(bars: Bars,
+                   members=TREND_ENSEMBLE_MEMBERS) -> pd.Series:
+    """Равновзвешенное среднее позиций тренд-моделей.
+
+    Args:
+        bars: Данные инструмента.
+        members: Кортеж функций-моделей (Bars -> position [0, 1]).
+
+    Returns:
+        position в [0, 1]: средняя сила тренда по моделям.
+    """
+    acc = None
+    for fn in members:
+        p = fn(bars).fillna(0.0)
+        acc = p if acc is None else acc + p
+    return acc / float(len(members))
+
+
+# Пара keltner + confirm (2026-07f): LOO + walk-forward на двух
+# источниках показали, что mr_atr_stop/mr_time_stop дублируют keltner
+# (корреляция 0.8-0.9) — разбавляют доходность, не диверсифицируя.
+# confirm — единственный декоррелированный член (0.27-0.40), но соло
+# слаб. Пара = доходность keltner + диверсификация confirm, без двух
+# клонов. Гипотеза: между моно-keltner (доходнее, но dispersion 5.0%)
+# и полной четвёркой (глаже, 3.2%, но вдвое слабее по среднему).
+MR_KELTNER_CONFIRM_MEMBERS = (mr_keltner, mr_confirm)
+
+
+def mr_keltner_confirm(bars: Bars) -> pd.Series:
+    """MR-ансамбль из двух декоррелированных членов: keltner + confirm.
+
+    Args:
+        bars: Данные инструмента.
+
+    Returns:
+        position [0, 1]: среднее позиций keltner и confirm.
+    """
+    return mr_ensemble(bars, members=MR_KELTNER_CONFIRM_MEMBERS)
+
+
 ENSEMBLES = {
     "mr_ens": mr_ensemble,
     "combo_tmr": trend_mr_combo,
+    "trend_ens": trend_ensemble,
+    "mr_kelt_confirm": mr_keltner_confirm,
 }

@@ -76,16 +76,22 @@ def main() -> None:
           f"{args.source} | sizer={args.sizer} | "
           f"{args.start}..{args.end}{RESET}")
     bars_by_symbol = {}
+    skipped = []
     for name, ticker in basket.items():
         try:
             bars_by_symbol[name] = source.load(
                 ticker, args.start, args.end, args.interval
             )
         except Exception as exc:  # noqa: BLE001
+            skipped.append(name)
             print(f"  {YELLOW}пропуск {name} ({ticker}): {exc}{RESET}")
     if not bars_by_symbol:
         print(f"{RED}Нет данных.{RESET}")
         return
+    if skipped:
+        print(f"{RED}ВНИМАНИЕ: корзина неполная ({len(skipped)} "
+              f"пропущено: {', '.join(skipped)}). Портфельные числа "
+              f"НЕСРАВНИМЫ с прогонами на полной корзине!{RESET}")
 
     df = vol_sweep_basket(
         bars_by_symbol, signal_fn, tuple(args.vols),

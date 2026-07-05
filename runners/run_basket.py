@@ -27,7 +27,9 @@ from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
 from strategies import bollinger, donchian, ema, seasonal
-from strategies.ensemble import ENSEMBLES
+from strategies.ensemble import ENSEMBLES, mr_ensemble
+from strategies.overlays import with_vol_gate
+from strategies.trend_lab import TREND_LAB
 from strategies.meanrev_lab import MEANREV_LAB
 from strategies.ou import ou_zscore
 
@@ -49,7 +51,10 @@ STRATEGIES = {
     # Donchian
     "donchian": donchian.donchian_breakout,
     "donchian_vt": donchian.donchian_ensemble_voltarget,
-    "champion": donchian.donchian_est_macd_4step_take,  # champion commodity
+    # 2026-07b: "champion" РАЗЖАЛОВАН — проигрывает donchian_vt на
+    # walk-forward (60% окон vs 80%; take-profit режет правый хвост).
+    # Имя сохранено для сравнимости со старыми отчётами.
+    "champion": donchian.donchian_est_macd_4step_take,
     "4step_pyr": donchian.donchian_est_macd_4step_pyramid,
     "donchian_est_pyr": donchian.donchian_ensemble_pyramid,
     # Bollinger / mean-rev
@@ -69,6 +74,14 @@ STRATEGIES.update(MEANREV_LAB)
 # Ансамбли уровня сигнала: MR-ансамбль и trend+MR комбо
 # (strategies/ensemble.py). Сырые сигналы — VT снаружи (--vt).
 STRATEGIES.update(ENSEMBLES)
+# Лаборатория тренда: пакет мат-моделей для пере-выбора чемпиона
+# (strategies/trend_lab.py, дисклеймер multiple testing там же).
+STRATEGIES.update(TREND_LAB)
+# Гейтованные версии: vol-percentile gate против структурных
+# коллапсов (ответ на CL апрель-2020, см. strategies/overlays.py).
+STRATEGIES["mr_ens_gate"] = with_vol_gate(mr_ensemble)
+STRATEGIES["mr_atr_gate"] = with_vol_gate(
+    MEANREV_LAB["mr_atr_stop"])
 
 
 def _verdict(res: BacktestResult, dd_limit: float = 0.40) -> str:
@@ -115,10 +128,12 @@ def run_strategy_on_basket(
         DataFrame сводки: инструмент, доходность, DD, Sharpe, проходит DD.
     """
     rows = []
+    skipped = []
     for name, ticker in basket.items():
         try:
             bars = source.load(ticker, start, end, interval)
         except Exception as exc:  # noqa: BLE001
+            skipped.append(name)
             print(f"  {YELLOW}пропуск {name} ({ticker}): {exc}{RESET}")
             continue
         pos = strategy_fn(bars)
@@ -136,6 +151,10 @@ def run_strategy_on_basket(
         else:
             print(f"  {name:14s} {_verdict(res)}  "
                   f"Sharpe {res.sharpe:+.2f}")
+    if skipped:
+        print(f"{RED}ВНИМАНИЕ: корзина неполная ({len(skipped)} "
+              f"пропущено: {', '.join(skipped)}). Портфельные числа "
+              f"НЕСРАВНИМЫ с прогонами на полной корзине!{RESET}")
     return pd.DataFrame(rows)
 
 
