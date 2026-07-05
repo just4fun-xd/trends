@@ -12,6 +12,7 @@ env/
 
 # Data (большие/покупные — не в git)
 data/panels/
+reports/
 *.csv
 !sp500_tickers.csv
 
