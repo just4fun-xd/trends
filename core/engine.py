@@ -50,14 +50,21 @@ class BacktestResult:
     position: pd.Series
     bars_per_year: float = 252.0
     symbol: str = ""
+    rf: float = 0.0
 
     @property
     def sharpe(self) -> float:
-        """Годовой Sharpe кривой капитала (безрисковая = 0)."""
+        """Годовой excess-Sharpe кривой капитала (вычет rf).
+
+        Соглашение идентично diagnostics.bootstrap._sharpe:
+        excess = mean − rf/bars_per_year, затем аннуализация.
+        При rf=0 сводится к прежнему поведению.
+        """
         rets = self.equity.pct_change().dropna()
         if rets.std() == 0 or len(rets) < 2:
             return 0.0
-        return float(rets.mean() / rets.std() * np.sqrt(self.bars_per_year))
+        excess = rets.mean() - self.rf / self.bars_per_year
+        return float(excess / rets.std() * np.sqrt(self.bars_per_year))
 
     def passes_dd(self, limit: float = 0.40) -> bool:
         """Проходит ли жёсткий лимит максимальной просадки.
@@ -104,6 +111,7 @@ def run_engine(
     position: pd.Series,
     trade_start: str | None = None,
     cost: float = 0.0002,
+    rf: float = 0.0,
 ) -> BacktestResult:
     """Прогоняет позицию через движок, возвращает метрики.
 
@@ -155,6 +163,7 @@ def run_engine(
         position=prev_pos,
         bars_per_year=bars.bars_per_year,
         symbol=bars.symbol,
+        rf=rf,
     )
 
 

@@ -105,12 +105,15 @@ def sleeve_returns(
     return df.mean(axis=1, skipna=True).fillna(0.0)
 
 
-def metrics(returns: pd.Series, bpy: float = 252.0) -> dict:
+def metrics(returns: pd.Series, bpy: float = 252.0,
+            rf: float = 0.0) -> dict:
     """Итоговые метрики P&L-ряда.
 
     Args:
         returns: Побарные доходности.
         bpy: Баров в году.
+        rf: Годовая безрисковая ставка (excess-Sharpe; согласовано
+            с diagnostics.bootstrap и core.engine).
 
     Returns:
         dict(ret, dd, sharpe).
@@ -118,7 +121,8 @@ def metrics(returns: pd.Series, bpy: float = 252.0) -> dict:
     eq = (1.0 + returns).cumprod()
     dd = float((eq / eq.cummax() - 1.0).min())
     std = returns.std()
-    sharpe = (float(returns.mean() / std * np.sqrt(bpy))
+    excess = returns.mean() - rf / bpy
+    sharpe = (float(excess / std * np.sqrt(bpy))
               if std > 0 else 0.0)
     return {"ret": float(eq.iloc[-1] - 1.0), "dd": dd, "sharpe": sharpe}
 
@@ -186,6 +190,10 @@ def main() -> None:
                         "--port-vol и --lev-sweep. Типично 0.04-0.08. "
                         "0.0 (default) = верхняя граница без costs.")
     p.add_argument("--cost", type=float, default=0.0002)
+    p.add_argument("--rf", type=float, default=0.0,
+                   help="годовая безрисковая ставка для excess-Sharpe "
+                        "(0.045 = 4.5%%). Default 0 — совместимо со "
+                        "старыми прогонами. Согласовано с run_bootstrap.")
     args = p.parse_args()
 
     def make_source(basket_name: str):
@@ -237,8 +245,10 @@ def main() -> None:
         )
     sleeves = pd.DataFrame(cols).fillna(0.0)
 
-    print(f"\n{BOLD}=== Sleeve'ы по отдельности ==={RESET}")
+    print(f"\n{BOLD}=== Sleeve'ы по отдельности (gross Sharpe) ==={RESET}")
     for label in sleeves.columns:
+        # gross: инвариантен к масштабу позиции; excess у отдельной
+        # низковольной ноги — артефакт (rf/sigma взрывается).
         m = metrics(sleeves[label])
         print(f"  {label:28s} ret {m['ret']:+7.1%}  "
               f"DD {m['dd']:6.1%}  Sharpe {m['sharpe']:+.2f}")
@@ -265,11 +275,30 @@ def main() -> None:
         mode = "равные"
 
     combo = (sleeves * w).sum(axis=1)
-    m = metrics(combo)
+    m = metrics(combo, rf=args.rf)
+    m_gross = metrics(combo)  # rf=0: инвариантен к масштабу позиции
+    n_bars = max(len(combo), 1)
+    ann_ret = float((1.0 + combo).prod() ** (252.0 / n_bars) - 1.0)
     print(f"\n{BOLD}=== КОМБО ({mode}) ==={RESET}")
-    print(f"  Доходность: {m['ret']:+.1%}")
+    print(f"  Доходность: {m['ret']:+.1%}  (годовая: {ann_ret:+.1%})")
     print(f"  Max DD:     {m['dd']:.1%}")
-    print(f"  Sharpe:     {m['sharpe']:+.2f}")
+    if args.rf:
+        # Две рамки учёта (роадмап 0.3, collateral yield):
+        #  - cash-счёт: капитал в стратегии, rf вычитается -> excess.
+        #  - фьючерсный счёт: обеспечение в T-bills зарабатывает rf
+        #    само; excess счёта над T-bills = чистый P&L стратегии,
+        #    т.е. excess-Sharpe фьючерсного счёта = gross Sharpe.
+        #    Вычитать rf из P&L фьючерсов = двойной счёт.
+        print(f"  Sharpe (cash-счёт, excess rf={args.rf:.1%}): "
+              f"{m['sharpe']:+.2f}")
+        print(f"  {BOLD}Sharpe (фьючерсный счёт, обеспечение в "
+              f"T-bills): {m_gross['sharpe']:+.2f}{RESET}")
+        print(f"  {BOLD}Доходность счёта с обеспечением: "
+              f"{ann_ret + args.rf:+.1%} годовых "
+              f"(= rf {args.rf:.1%} + стратегия {ann_ret:+.1%}) — "
+              f"против T-bills {args.rf:.1%}{RESET}")
+    else:
+        print(f"  Sharpe:     {m['sharpe']:+.2f}")
     realized_vol = float(combo.std() * (252.0 ** 0.5))
     print(f"  Годовая вола комбо: {realized_vol:.1%} "
           f"(доля лимита DD<40%: ~{realized_vol / 0.40:.0%})")
@@ -278,8 +307,11 @@ def main() -> None:
     print(f"  Проходит DD<40%: {mark}")
 
     eq = (1.0 + combo).cumprod()
+    # Годовая таблица в gross Sharpe (фьючерсная рамка): вычет rf из
+    # низковольного ряда даёт масштабо-зависимые, вводящие в
+    # заблуждение числа (см. NG -2.34 в аудите 2026-07).
     yb = yearly_breakdown(eq, 252.0)
-    print("\n" + format_yearly_table(yb, "Комбо по годам"))
+    print("\n" + format_yearly_table(yb, "Комбо по годам (gross Sharpe)"))
 
     if args.port_vol:
         scaled, lev = portfolio_vol_target(
@@ -287,7 +319,7 @@ def main() -> None:
             max_leverage=args.max_port_lev,
             funding_rate=args.funding_rate,
         )
-        ms = metrics(scaled)
+        ms = metrics(scaled, rf=args.rf)
         print(f"\n{BOLD}=== КОМБО × портфельный VT@"
               f"{args.port_vol:.0%} (плечо кэп "
               f"{args.max_port_lev:.1f}) ==={RESET}")
@@ -309,7 +341,7 @@ def main() -> None:
                   f"фондирование плеча НЕ учтено "
                   f"(--funding-rate 0){RESET}")
         eq_s = (1.0 + scaled).cumprod()
-        yb_s = yearly_breakdown(eq_s, 252.0)
+        yb_s = yearly_breakdown(eq_s, 252.0, rf=args.rf)
         print("\n" + format_yearly_table(
             yb_s, f"Комбо VT@{args.port_vol:.0%} по годам"))
 

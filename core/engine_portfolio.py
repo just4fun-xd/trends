@@ -41,15 +41,21 @@ class PortfolioResult:
     weights: pd.DataFrame
     gross: pd.Series
     bars_per_year: float = 252.0
+    rf: float = 0.0
 
     @property
     def sharpe(self) -> float:
-        """Годовой Sharpe кривой капитала портфеля (безрисковая = 0)."""
+        """Годовой excess-Sharpe кривой капитала портфеля (вычет rf).
+
+        Соглашение идентично diagnostics.bootstrap._sharpe.
+        При rf=0 сводится к прежнему поведению.
+        """
         rets = self.equity.pct_change().dropna()
         if rets.std() == 0 or len(rets) < 2:
             return 0.0
+        excess = rets.mean() - self.rf / self.bars_per_year
         return float(
-            rets.mean() / rets.std() * np.sqrt(self.bars_per_year)
+            excess / rets.std() * np.sqrt(self.bars_per_year)
         )
 
     def passes_dd(self, limit: float = 0.40) -> bool:
@@ -70,6 +76,7 @@ def run_portfolio(
     bars_per_year: float = 252.0,
     cost: float = 0.0002,
     trade_start: str | None = None,
+    rf: float = 0.0,
 ) -> PortfolioResult:
     """Прогоняет матрицу весов через портфельный движок.
 
@@ -141,6 +148,7 @@ def run_portfolio(
         weights=prev_w,
         gross=gross,
         bars_per_year=bars_per_year,
+        rf=rf,
     )
 
 

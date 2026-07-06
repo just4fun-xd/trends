@@ -19,7 +19,7 @@ import pandas as pd
 
 
 def yearly_breakdown(
-    equity: pd.Series, bars_per_year: float = 252.0
+    equity: pd.Series, bars_per_year: float = 252.0, rf: float = 0.0
 ) -> pd.DataFrame:
     """Годовая разбивка одной кривой капитала.
 
@@ -47,7 +47,8 @@ def yearly_breakdown(
         year_ret = float(curve.iloc[-1] - 1.0)
         dd = float((curve / curve.cummax() - 1.0).min())
         if grp.std() > 0 and len(grp) > 1:
-            sharpe = float(grp.mean() / grp.std() * np.sqrt(bars_per_year))
+            excess = grp.mean() - rf / bars_per_year
+            sharpe = float(excess / grp.std() * np.sqrt(bars_per_year))
         else:
             sharpe = 0.0
         rows[int(year)] = {

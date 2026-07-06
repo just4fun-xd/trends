@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 
+import numpy as np
 import pandas as pd
 
 from core.config import (
@@ -114,7 +115,7 @@ def run_strategy_on_basket(
     interval: str = "1d",
     cost: float = 0.0002,
     yearly: bool = False,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, dict]:
     """Прогоняет стратегию по всей корзине, возвращает сводную таблицу.
 
     Args:
@@ -129,10 +130,13 @@ def run_strategy_on_basket(
             инструменту (флаг --yearly).
 
     Returns:
-        DataFrame сводки: инструмент, доходность, DD, Sharpe, проходит DD.
+        (DataFrame сводки, dict {инструмент: кривая капитала}). Кривые
+        нужны print_summary для настоящего портфельного Sharpe (equal-
+        weight по дневным P&L), а не усреднения итоговых компаундов.
     """
     rows = []
     skipped = []
+    equity_by_name = {}
     for name, ticker in basket.items():
         try:
             bars = source.load(ticker, start, end, interval)
@@ -141,7 +145,14 @@ def run_strategy_on_basket(
             print(f"  {YELLOW}пропуск {name} ({ticker}): {exc}{RESET}")
             continue
         pos = strategy_fn(bars)
+        # rf НЕ вычитается на уровне отдельной ноги: одиночный инструмент
+        # несёт лишь долю риск-бюджета (реализованная вола ~2-4%, не 15%),
+        # а обеспечение зарабатывает rf ОДИН раз на весь счёт, не по разу
+        # на каждый инструмент. Вычет rf из каждой ноги давал абсурд
+        # (NG Sharpe -2.34 при +5% компаунде). Excess-Sharpe осмыслен
+        # только на портфельном пути (run_sleeves / полное комбо).
         res = run_engine(bars, pos, cost=cost)
+        equity_by_name[name] = res.equity
         rows.append({
             "instrument": name,
             "return": res.total_return,
@@ -159,18 +170,28 @@ def run_strategy_on_basket(
         print(f"{RED}ВНИМАНИЕ: корзина неполная ({len(skipped)} "
               f"пропущено: {', '.join(skipped)}). Портфельные числа "
               f"НЕСРАВНИМЫ с прогонами на полной корзине!{RESET}")
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows), equity_by_name
 
 
-def print_summary(df: pd.DataFrame, strategy_name: str) -> None:
+def print_summary(df: pd.DataFrame, strategy_name: str,
+                  equity_by_name: dict | None = None,
+                  rf: float = 0.0,
+                  bars_per_year: float = 252.0) -> None:
     """Печатает портфельную сводку по таблице результатов.
 
-    Портфель = среднее по инструментам; max DD портфеля = worst-case
-    среди инструментов (не средневзвешенная) — как в BENCHMARK_RESULTS.
+    Портфель = equal-weight по дневным P&L инструментов (не усреднение
+    итоговых компаундов). max DD портфеля = worst-case среди
+    инструментов (как в BENCHMARK_RESULTS).
 
     Args:
         df: Таблица результатов run_strategy_on_basket.
         strategy_name: Имя стратегии для заголовка.
+        equity_by_name: Кривые капитала по инструментам. Если заданы —
+            строится настоящий equal-weight портфель и его полный
+            (не среднегодовой) excess-Sharpe с вычетом rf ОДИН раз.
+        rf: Годовая безрисковая ставка (вычитается один раз на уровне
+            портфеля — обеспечение зарабатывает rf на весь счёт).
+        bars_per_year: Для аннуализации.
     """
     if df.empty:
         print(f"{RED}Нет результатов (данные недоступны?){RESET}")
@@ -182,11 +203,44 @@ def print_summary(df: pd.DataFrame, strategy_name: str) -> None:
     med_ret = df["return"].median()
 
     print(f"\n{BOLD}=== {strategy_name} — портфель ==={RESET}")
-    print(f"  Средняя доходность:  {port_ret:+.1%}")
-    print(f"  Медианная доходность: {med_ret:+.1%}")
+    print(f"  Средняя доходность (комп.): {port_ret:+.1%}")
+    print(f"  Медианная доходность (комп.): {med_ret:+.1%}")
     print(f"  Worst-case DD:       {worst_dd:.1%}")
     print(f"  Прибыльных:          {profitable}/{total}")
     print(f"  Проходят DD<40%:     {int(df['passes_dd'].sum())}/{total}")
+
+    if equity_by_name:
+        # Настоящий equal-weight портфель из дневных доходностей ног.
+        rets = pd.DataFrame({
+            n: eq.pct_change() for n, eq in equity_by_name.items()
+        }).fillna(0.0)
+        port = rets.mean(axis=1)  # equal-weight дневной P&L
+        std = port.std(ddof=1)
+        if std > 0:
+            sharpe_gross = float(port.mean() / std
+                                 * np.sqrt(bars_per_year))
+            excess = port.mean() - rf / bars_per_year
+            sharpe_ex = float(excess / std * np.sqrt(bars_per_year))
+            ann_ret = float((1.0 + port).prod()
+                            ** (bars_per_year / len(port)) - 1.0)
+            port_eq = (1.0 + port).cumprod()
+            port_dd = float((port_eq / port_eq.cummax() - 1.0).min())
+            print(f"  {BOLD}Портфель EW — годовая доходность: "
+                  f"{ann_ret:+.1%}{RESET}")
+            if rf:
+                # Фьючерсная рамка: обеспечение в T-bills зарабатывает
+                # rf само -> excess счёта = gross Sharpe стратегии.
+                print(f"  Портфель EW — Sharpe (cash-счёт, excess "
+                      f"rf={rf:.1%}): {sharpe_ex:+.2f}")
+                print(f"  {BOLD}Портфель EW — Sharpe (фьючерсный счёт, "
+                      f"обеспечение в T-bills): {sharpe_gross:+.2f}"
+                      f"{RESET}")
+                print(f"  {BOLD}Доходность счёта с обеспечением: "
+                      f"{ann_ret + rf:+.1%} годовых{RESET}")
+            else:
+                print(f"  {BOLD}Портфель EW — Sharpe (rf=0): "
+                      f"{sharpe_gross:+.2f}{RESET}")
+            print(f"  Портфель EW — реальная DD:  {port_dd:.1%}")
 
 
 def main() -> None:
@@ -219,6 +273,12 @@ def main() -> None:
     parser.add_argument(
         "--yearly", action="store_true",
         help="Годовая разбивка return/DD по каждому инструменту",
+    )
+    parser.add_argument(
+        "--rf", type=float, default=0.0,
+        help="Годовая безрисковая ставка для excess-Sharpe "
+             "(0.045 = 4.5%%). По умолчанию 0 — совместимо со старыми "
+             "прогонами. Согласовано с run_bootstrap.",
     )
     parser.add_argument(
         "--panel-dir", default=None,
@@ -270,11 +330,12 @@ def main() -> None:
     print(f"{BOLD}Стратегия {args.strategy} | {args.basket} | "
           f"{args.source} | {args.interval}{vt_note} | "
           f"{args.start}..{args.end}{RESET}")
-    df = run_strategy_on_basket(
+    df, equity_by_name = run_strategy_on_basket(
         strategy_fn, basket, source, args.start, args.end,
         args.interval, args.cost, yearly=args.yearly,
     )
-    print_summary(df, args.strategy)
+    print_summary(df, args.strategy, equity_by_name=equity_by_name,
+                  rf=args.rf)
 
 
 if __name__ == "__main__":

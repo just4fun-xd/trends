@@ -162,3 +162,24 @@ if __name__ == "__main__":
     test_kalman_beta_valid()
     test_kalman_pair_yearly()
     print("\nВсе тесты новых треков пройдены.")
+
+
+def test_instrument_contribution_flags_ballast():
+    """LOO помечает балластом актив, чьё исключение поднимает Sharpe."""
+    import numpy as np
+    import pandas as pd
+    from diagnostics.instrument_contribution import (
+        instrument_contribution,
+    )
+    rng = np.random.default_rng(3)
+    idx = pd.date_range("2019-01-01", periods=800, freq="B")
+    rets = pd.DataFrame({
+        "good1": rng.normal(0.0008, 0.01, 800),
+        "good2": rng.normal(0.0007, 0.011, 800),
+        "ballast": rng.normal(-0.0010, 0.02, 800),
+    }, index=idx)
+    df = instrument_contribution(rets)
+    # Балласт должен иметь положительную LOO-дельту (без него лучше).
+    assert df.loc["ballast", "loo_delta"] > 0
+    # И его solo-Sharpe должен быть ниже, чем у хороших.
+    assert df.loc["ballast", "solo_sharpe"] < df.loc["good1", "solo_sharpe"]

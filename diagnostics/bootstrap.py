@@ -66,7 +66,9 @@ def _sharpe(rets: np.ndarray, bars_per_year: float,
     Returns:
         (mean − rf_daily)/std × √bars_per_year; 0 при нулевой std.
     """
-    std = rets.std()
+    # ddof=1 (выборочная std) — согласовано с pandas .std() в core.engine,
+    # иначе Sharpe движка и бутстрапа расходятся на √(n/(n-1)).
+    std = rets.std(ddof=1)
     if std <= 0:
         return 0.0
     excess = rets.mean() - rf / bars_per_year
