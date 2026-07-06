@@ -27,6 +27,7 @@ from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
 from strategies import bollinger, donchian, ema, seasonal
+from strategies.advanced import ADVANCED
 from strategies.ensemble import ENSEMBLES, mr_ensemble
 from strategies.overlays import with_vol_gate
 from strategies.trend_lab import TREND_LAB
@@ -77,6 +78,9 @@ STRATEGIES.update(ENSEMBLES)
 # Лаборатория тренда: пакет мат-моделей для пере-выбора чемпиона
 # (strategies/trend_lab.py, дисклеймер multiple testing там же).
 STRATEGIES.update(TREND_LAB)
+# Продвинутый мат-аппарат (2026-07e): Carver FDM, Hurst-аллокатор,
+# volume-подтверждение (strategies/advanced.py).
+STRATEGIES.update(ADVANCED)
 # Гейтованные версии: vol-percentile gate против структурных
 # коллапсов (ответ на CL апрель-2020, см. strategies/overlays.py).
 STRATEGIES["mr_ens_gate"] = with_vol_gate(mr_ensemble)
