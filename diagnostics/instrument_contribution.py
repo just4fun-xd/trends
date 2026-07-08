@@ -59,17 +59,19 @@ def per_instrument_returns(
         cost: издержки движка.
 
     Returns:
-        DataFrame: индекс — даты, колонки — инструменты, значения —
+        (DataFrame, bars_per_year): индекс — даты, колонки — инструменты;
         побарный P&L (после издержек). NaN там, где инструмент не
         торговался в этот день.
     """
     per_inst = {}
+    bpy = 252.0
     for name, ticker in basket.items():
         try:
             bars = source.load(ticker, start, end, interval)
         except Exception as exc:  # noqa: BLE001
             print(f"  пропуск {name} ({ticker}): {exc}")
             continue
+        bpy = bars.bars_per_year
         pos = strategy_fn(bars)
         if sizer is not None:
             pos = pos * sizer(bars)
@@ -77,7 +79,7 @@ def per_instrument_returns(
         per_inst[name] = res.equity.pct_change()
     if not per_inst:
         raise RuntimeError("нет данных ни по одному инструменту")
-    return pd.DataFrame(per_inst)
+    return pd.DataFrame(per_inst), bpy
 
 
 def instrument_contribution(

@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 
-from core.config import COMMODITY_DATABENTO, COMMODITY_YF, EQUITY_BASKET
+from core.config import (
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF, EQUITY_BASKET)
 from data.databento_source import DatabentoSource
+from data.ccxt_source import CCXTSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.walkforward import (
     consistency_metrics,
@@ -58,9 +60,9 @@ def main() -> None:
     parser.add_argument("--strategy", nargs="+", default=["bb_rsi_vt"],
                         help="Одна или несколько стратегий для сравнения")
     parser.add_argument("--source", default="yf",
-                        choices=["yf", "databento"])
+                        choices=["yf", "databento", "ccxt"])
     parser.add_argument("--basket", default="commodity",
-                        choices=["commodity", "equity"])
+                        choices=["commodity", "equity", "crypto"])
     parser.add_argument("--start", default="2021-01-01")
     parser.add_argument("--end", default="2026-01-01")
     parser.add_argument("--interval", default="1d")
@@ -72,7 +74,11 @@ def main() -> None:
     parser.add_argument("--sizer", default="realized",
                         choices=["realized", "garch"],
                         help="Оценка волы для --vt")
+    parser.add_argument("--target-vol", type=float, default=0.15,
+                        help="Целевая вола для --vt (0.6 = 60%). "
+                             "Раньше был захардкожен 15%.")
     parser.add_argument("--panel-dir", default=None)
+    parser.add_argument("--crypto-dir", default="data/crypto")
     parser.add_argument("--exclude", default=None,
                         help="Инструменты через запятую, исключить из "
                              "корзины (напр. тонкие H4-рынки: PA,PL)")
@@ -88,10 +94,17 @@ def main() -> None:
         source = DatabentoSource(panel_dir=panel_dir)
         basket = (EQUITY_BASKET if args.basket == "equity"
                   else {s: s for s in COMMODITY_DATABENTO})
+    elif args.source == "ccxt":
+        source = CCXTSource(data_dir=args.crypto_dir)
+        basket = CRYPTO_CCXT
     else:
         source = YFinanceSource()
-        basket = (EQUITY_BASKET if args.basket == "equity"
-                  else COMMODITY_YF)
+        if args.basket == "equity":
+            basket = EQUITY_BASKET
+        elif args.basket == "crypto":
+            basket = CRYPTO_YF
+        else:
+            basket = COMMODITY_YF
 
     if args.exclude:
         drop = {s.strip() for s in args.exclude.split(",")}
@@ -117,7 +130,7 @@ def main() -> None:
         if args.vt:
             from core.sizing import make_sizer
             base_fn = fn
-            sizer = make_sizer(args.sizer)
+            sizer = make_sizer(args.sizer, target_vol=args.target_vol)
 
             def fn(bars, _b=base_fn, _s=sizer):  # noqa: E731
                 return _b(bars) * _s(bars)

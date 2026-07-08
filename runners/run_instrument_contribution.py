@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import argparse
 
-from core.config import COMMODITY_DATABENTO, COMMODITY_YF, EQUITY_BASKET
+from core.config import (
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF, EQUITY_BASKET)
 from core.sizing import make_sizer
 from data.databento_source import DatabentoSource
+from data.ccxt_source import CCXTSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.instrument_contribution import (
     format_contribution,
@@ -44,10 +46,12 @@ def main() -> None:
     p.add_argument("--strategy", default="donchian_vt",
                    help="имя стратегии из реестра run_basket")
     p.add_argument("--source", default="yf",
-                   choices=["yf", "databento"])
+                   choices=["yf", "databento", "ccxt"])
     p.add_argument("--basket", default="commodity",
-                   choices=["commodity", "equity"])
+                   choices=["commodity", "equity", "crypto"])
     p.add_argument("--panel-dir", default=None)
+    p.add_argument("--crypto-dir", default="data/crypto",
+                   help="каталог parquet-свечей для --source ccxt")
     p.add_argument("--start", default="2019-01-01")
     p.add_argument("--end", default="2026-01-01")
     p.add_argument("--interval", default="1d")
@@ -67,11 +71,18 @@ def main() -> None:
     if panel_dir is None:
         panel_dir = ("data/panels/equities" if args.basket == "equity"
                      else "data/panels/futures")
-    source = (YFinanceSource() if args.source == "yf"
-              else DatabentoSource(panel_dir=panel_dir))
+    if args.source == "yf":
+        source = YFinanceSource()
+    elif args.source == "ccxt":
+        source = CCXTSource(data_dir=getattr(
+            args, "crypto_dir", "data/crypto"))
+    else:
+        source = DatabentoSource(panel_dir=panel_dir)
 
     if args.basket == "equity":
         basket = EQUITY_BASKET
+    elif args.basket == "crypto":
+        basket = (CRYPTO_CCXT if args.source == "ccxt" else CRYPTO_YF)
     elif args.source == "databento":
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
@@ -86,13 +97,13 @@ def main() -> None:
           f"{args.basket} | {args.source}{vt_note} | "
           f"{args.start}..{args.end}{RESET}")
 
-    rets = per_instrument_returns(
+    rets, bpy = per_instrument_returns(
         strategy_fn, basket, source, args.start, args.end,
         sizer=sizer, cost=args.cost, interval=args.interval,
     )
     full = rets.mean(axis=1, skipna=True).fillna(0.0)
-    full_sharpe = _sharpe(full)
-    df = instrument_contribution(rets)
+    full_sharpe = _sharpe(full, bpy)
+    df = instrument_contribution(rets, bpy)
     print("\n" + format_contribution(
         df, full_sharpe,
         f"{args.strategy} — вклад по инструментам "

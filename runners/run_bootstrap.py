@@ -21,10 +21,13 @@ import pandas as pd
 from core.config import (
     COMMODITY_DATABENTO,
     COMMODITY_YF,
+    CRYPTO_CCXT,
+    CRYPTO_YF,
     EQUITY_BASKET,
 )
 from core.engine import run_engine
 from core.sizing import make_sizer
+from data.ccxt_source import CCXTSource
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.bootstrap import sharpe_ci, sharpe_diff_ci
@@ -35,19 +38,27 @@ BOLD, GREEN, RED, YELLOW, RESET = (
 
 def _sleeve(strategy_fn, basket, source, start, end, interval,
             sizer, cost):
-    """Equal-weight sleeve-доходности стратегии по корзине."""
+    """Equal-weight sleeve-доходности стратегии по корзине.
+
+    Returns:
+        (Series P&L, bars_per_year первого инструмента) — bpy нужен
+        для честной аннуализации на интрадей (4h=2190, не 252).
+    """
     cols = {}
+    bpy = 252.0
     for name, ticker in basket.items():
         try:
             bars = source.load(ticker, start, end, interval)
         except Exception as exc:  # noqa: BLE001
             print(f"  {YELLOW}пропуск {name}: {exc}{RESET}")
             continue
+        bpy = bars.bars_per_year
         pos = strategy_fn(bars)
         if sizer is not None:
             pos = pos * sizer(bars)
         cols[name] = run_engine(bars, pos, cost=cost).equity.pct_change()
-    return pd.DataFrame(cols).mean(axis=1, skipna=True).fillna(0.0)
+    rets = pd.DataFrame(cols).mean(axis=1, skipna=True).fillna(0.0)
+    return rets, bpy
 
 
 def main() -> None:
@@ -61,6 +72,7 @@ def main() -> None:
     p.add_argument("--basket", default="commodity")
     p.add_argument("--source", default="yf")
     p.add_argument("--panel-dir", default=None)
+    p.add_argument("--crypto-dir", default="data/crypto")
     p.add_argument("--interval", default="1d")
     p.add_argument("--start", default="2019-01-01")
     p.add_argument("--end", default="2026-01-01")
@@ -79,10 +91,16 @@ def main() -> None:
     panel_dir = args.panel_dir or (
         "data/panels/equities" if args.basket == "equity"
         else "data/panels/futures")
-    source = (YFinanceSource() if args.source == "yf"
-              else DatabentoSource(panel_dir=panel_dir))
+    if args.source == "yf":
+        source = YFinanceSource()
+    elif args.source == "ccxt":
+        source = CCXTSource(data_dir=args.crypto_dir)
+    else:
+        source = DatabentoSource(panel_dir=panel_dir)
     if args.basket == "equity":
         basket = EQUITY_BASKET
+    elif args.basket == "crypto":
+        basket = (CRYPTO_CCXT if args.source == "ccxt" else CRYPTO_YF)
     elif args.source == "databento":
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
@@ -92,17 +110,19 @@ def main() -> None:
              if args.vt else None)
     print(f"{BOLD}Bootstrap {args.a} vs {args.b} | {args.basket} | "
           f"{args.source} | rf={args.rf:.1%} | CI {args.ci:.0%}{RESET}")
-    ra = _sleeve(STRATEGIES[args.a], basket, source, args.start,
-                 args.end, args.interval, sizer, args.cost)
-    rb = _sleeve(STRATEGIES[args.b], basket, source, args.start,
-                 args.end, args.interval, sizer, args.cost)
+    ra, bpy = _sleeve(STRATEGIES[args.a], basket, source, args.start,
+                      args.end, args.interval, sizer, args.cost)
+    rb, _ = _sleeve(STRATEGIES[args.b], basket, source, args.start,
+                    args.end, args.interval, sizer, args.cost)
 
     for name, r in ((args.a, ra), (args.b, rb)):
-        c = sharpe_ci(r, n_boot=args.n_boot, ci=args.ci, rf=args.rf)
+        c = sharpe_ci(r, bars_per_year=bpy, n_boot=args.n_boot,
+                      ci=args.ci, rf=args.rf)
         print(f"  {name:<18} Sharpe {c['sharpe']:+.2f}  "
               f"CI [{c['lo']:+.2f}, {c['hi']:+.2f}]")
 
-    d = sharpe_diff_ci(ra, rb, n_boot=args.n_boot, ci=args.ci,
+    d = sharpe_diff_ci(ra, rb, bars_per_year=bpy,
+                       n_boot=args.n_boot, ci=args.ci,
                        rf=args.rf)
     verdict = (f"{GREEN}ЗНАЧИМО{RESET}" if d["significant"]
                else f"{YELLOW}НЕРАЗЛИЧИМЫ{RESET}")

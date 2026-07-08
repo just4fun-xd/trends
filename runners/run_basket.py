@@ -82,6 +82,39 @@ STRATEGIES.update(TREND_LAB)
 # Продвинутый мат-аппарат (2026-07e): Carver FDM, Hurst-аллокатор,
 # volume-подтверждение (strategies/advanced.py).
 STRATEGIES.update(ADVANCED)
+# Hurst-аллокатор v2 (2026-07f): variance-ratio H, откалиброван по
+# карте актив×стратегия (strategies/hurst_alloc.py).
+from strategies.hurst_alloc import HURST_ALLOC  # noqa: E402
+STRATEGIES.update(HURST_ALLOC)
+# OU-лаборатория (2026-07f): 10 модификаций OU-реверсии под
+# исследование крипто-ниши (strategies/ou_lab.py).
+from strategies.ou_lab import OU_LAB  # noqa: E402
+STRATEGIES.update(OU_LAB)
+# Kalman trend (2026-07g): state-space уровень+наклон, непрерывный
+# тренд с матмоделью — ответ на «пробой слишком просто» для крипты
+# (strategies/kalman_trend.py).
+from strategies.kalman_trend import KALMAN_TREND  # noqa: E402
+STRATEGIES.update(KALMAN_TREND)
+# Monday range (2026-07g): недельный пробой опорного диапазона —
+# бенчмарк Александра для крипты (strategies/monday_range.py).
+from strategies.monday_range import MONDAY_RANGE  # noqa: E402
+STRATEGIES.update(MONDAY_RANGE)
+# Импульсная лаборатория (2026-07g): 10 тренд-моделей для агрессивных
+# импульсных рынков + вариации Carver (strategies/impulse_lab.py).
+from strategies.impulse_lab import IMPULSE_LAB  # noqa: E402
+STRATEGIES.update(IMPULSE_LAB)
+# Carver-MR (2026-07g): реверсия аппаратом Карвера + мягкий vol-гейт
+# (идеи Кирилла, доработанные; strategies/carver_mr.py).
+from strategies.carver_mr import CARVER_MR  # noqa: E402
+STRATEGIES.update(CARVER_MR)
+# OU×Trend лаборатория (2026-07g): реверсия ВМЕСТЕ с трендом —
+# ответ на «раздел OU не может быть бесполезен» (ou_trend_lab.py).
+from strategies.ou_trend_lab import OU_TREND_LAB  # noqa: E402
+STRATEGIES.update(OU_TREND_LAB)
+# Trend Lab 2 (2026-07g): 10 трендовых на разном матаппарате —
+# регрессия/Хольт/SuperTrend/VHF/фракталы/Ишимоку/ER/ZLEMA/Hull.
+from strategies.trend_lab2 import TREND_LAB2  # noqa: E402
+STRATEGIES.update(TREND_LAB2)
 # Гейтованные версии: vol-percentile gate против структурных
 # коллапсов (ответ на CL апрель-2020, см. strategies/overlays.py).
 STRATEGIES["mr_ens_gate"] = with_vol_gate(mr_ensemble)

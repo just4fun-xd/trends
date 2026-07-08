@@ -39,7 +39,8 @@ import numpy as np
 import pandas as pd
 
 from core.config import (
-    COMMODITY_DATABENTO, COMMODITY_YF, EQUITY_BASKET)
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
+    EQUITY_BASKET)
 from core.engine import run_engine
 from core.sizing import (
     breakeven_funding_rate,
@@ -50,6 +51,7 @@ from diagnostics.port_lev_sweep import (
     format_leverage_sweep,
     leverage_sweep,
 )
+from data.ccxt_source import CCXTSource
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
 from diagnostics.yearly import format_yearly_table, yearly_breakdown
@@ -61,13 +63,15 @@ YELLOW = "\033[93m"
 RESET = "\033[0m"
 BOLD = "\033[1m"
 
-BASKETS = {"commodity": COMMODITY_YF, "equity": EQUITY_BASKET}
+BASKETS = {"commodity": COMMODITY_YF, "equity": EQUITY_BASKET,
+           "crypto": CRYPTO_YF}
 
 
 def sleeve_returns(
     strategy_fn, basket: dict, source, start: str, end: str,
     sizer_name: str | None, cost: float = 0.0002,
-    interval: str = "1d",
+    interval: str = "1d", target_vol: float = 0.15,
+    exclude: set | None = None,
 ) -> pd.Series:
     """Дневные доходности sleeve'а: equal-weight по корзине.
 
@@ -80,18 +84,28 @@ def sleeve_returns(
         sizer_name: None (сырой сигнал), 'realized' или 'garch' —
             сайзер из core.sizing, накладываемый на позицию.
         cost: Издержки движка.
+        target_vol: Целевая вола для сайзера (раньше был захардкожен
+            15%). Позволяет видеть реальный доход, а не задушенный.
+        exclude: Множество названий инструментов для исключения
+            (балласт по данным instrument_contribution).
 
     Returns:
         Ряд побарных доходностей sleeve'а (после издержек).
     """
-    sizer = make_sizer(sizer_name) if sizer_name else None
+    sizer = (make_sizer(sizer_name, target_vol=target_vol)
+             if sizer_name else None)
+    drop = exclude or set()
     per_inst = {}
+    bpy = 252.0
     for name, ticker in basket.items():
+        if name in drop:
+            continue
         try:
             bars = source.load(ticker, start, end, interval)
         except Exception as exc:  # noqa: BLE001
             print(f"  {YELLOW}пропуск {name} ({ticker}): {exc}{RESET}")
             continue
+        bpy = bars.bars_per_year
         pos = strategy_fn(bars)
         if sizer is not None:
             pos = pos * sizer(bars)
@@ -102,7 +116,7 @@ def sleeve_returns(
     df = pd.DataFrame(per_inst)
     # Пропуски отдельных инструментов (разные торговые календари) —
     # средний P&L по доступным в этот день, не по всем.
-    return df.mean(axis=1, skipna=True).fillna(0.0)
+    return df.mean(axis=1, skipna=True).fillna(0.0), bpy
 
 
 def metrics(returns: pd.Series, bpy: float = 252.0,
@@ -158,19 +172,28 @@ def main() -> None:
                         "champion:commodity, bb_rsi:commodity:vt "
                         "или mr_ens:commodity:garch")
     p.add_argument("--source", default="yf",
-                   choices=["yf", "databento"])
+                   choices=["yf", "databento", "ccxt"])
     p.add_argument("--panel-dir", default=None,
                    help="каталог parquet-панелей для databento "
                         "(commodity). equity-панели ищутся в "
                         "data/panels/equities.")
     p.add_argument("--interval", default="1d")
+    p.add_argument("--crypto-dir", default="data/crypto",
+                   help="каталог parquet для --source ccxt")
     p.add_argument("--exclude", default=None,
                    help="инструменты через запятую, исключить из "
-                        "корзины (напр. тонкие H4-рынки: PA,PL)")
+                        "корзины (напр. балласт: ZL,PA)")
+    p.add_argument("--target-vol", type=float, default=0.15,
+                   help="целевая вола per-instrument сайзера (0.6=60%%). "
+                        "Раньше был захардкожен 15%% — доход выглядел "
+                        "задушенным. Поднимай, чтобы видеть реальный.")
     p.add_argument("--start", default="2021-01-01")
     p.add_argument("--end", default="2026-01-01")
     p.add_argument("--weights", default=None,
                    help="фиксированные веса через запятую")
+    p.add_argument("--hrp", action="store_true",
+                   help="веса ног по HRP (де Прадо): для 3+ ног с "
+                        "кластерами корреляций; на 2 ногах = inverse-var")
     p.add_argument("--parity", action="store_true",
                    help="trailing inverse-vol веса (без look-ahead)")
     p.add_argument("--port-vol", type=float, default=None,
@@ -201,6 +224,9 @@ def main() -> None:
         if args.source == "yf":
             src = YFinanceSource()
             basket = dict(BASKETS[basket_name])
+        elif args.source == "ccxt":
+            src = CCXTSource(data_dir=args.crypto_dir)
+            basket = dict(CRYPTO_CCXT)
         else:
             # databento: корневые символы, панели по корзине.
             if basket_name == "equity":
@@ -220,7 +246,16 @@ def main() -> None:
 
     cols = {}
     for spec in args.sleeve:
-        parts = spec.split(":")
+        # Синтаксис: strategy:basket[:sizer][@INST1,INST2,...]
+        # Белый список после @ — ручное наполнение корзины ноги
+        # (ответ на «sleeve гоняет балласт»): каждая нога получает
+        # СВОЙ набор держателей из instrument_contribution.
+        include = None
+        core_spec = spec
+        if "@" in spec:
+            core_spec, inc_str = spec.split("@", 1)
+            include = {s.strip() for s in inc_str.split(",") if s.strip()}
+        parts = core_spec.split(":")
         strat, basket_name = parts[0], parts[1]
         # Третье поле: vt (realized) или garch — сайзер sleeve'а.
         sizer_name = None
@@ -237,11 +272,23 @@ def main() -> None:
         if basket_name not in BASKETS:
             raise SystemExit(f"нет корзины '{basket_name}'")
         src, basket = make_source(basket_name)
-        label = spec.replace(":", "_")
-        print(f"Sleeve {label} ({args.source}, {args.interval}) ...")
-        cols[label] = sleeve_returns(
+        if include:
+            missing = include - set(basket)
+            if missing:
+                raise SystemExit(
+                    f"@include в {spec!r}: нет в корзине "
+                    f"{sorted(missing)}; есть {sorted(basket)}")
+            basket = {k: v for k, v in basket.items() if k in include}
+        label = core_spec.replace(":", "_")
+        inc_note = f" [{len(basket)} инстр]" if include else ""
+        print(f"Sleeve {label}{inc_note} "
+              f"({args.source}, {args.interval}) ...")
+        excl = ({s.strip() for s in args.exclude.split(",")}
+                if args.exclude else None)
+        cols[label], bpy = sleeve_returns(
             fn, basket, src, args.start, args.end, sizer_name,
             args.cost, interval=args.interval,
+            target_vol=args.target_vol, exclude=excl,
         )
     sleeves = pd.DataFrame(cols).fillna(0.0)
 
@@ -249,7 +296,7 @@ def main() -> None:
     for label in sleeves.columns:
         # gross: инвариантен к масштабу позиции; excess у отдельной
         # низковольной ноги — артефакт (rf/sigma взрывается).
-        m = metrics(sleeves[label])
+        m = metrics(sleeves[label], bpy)
         print(f"  {label:28s} ret {m['ret']:+7.1%}  "
               f"DD {m['dd']:6.1%}  Sharpe {m['sharpe']:+.2f}")
 
@@ -266,6 +313,14 @@ def main() -> None:
             [w_fix], index=sleeves.index[:1], columns=sleeves.columns
         ).reindex(sleeves.index, method="ffill")
         mode = f"фиксированные {w_fix}"
+    elif args.hrp:
+        from diagnostics.hrp import hrp_weights
+        w_static = hrp_weights(sleeves)
+        w = pd.DataFrame([w_static.values] * len(sleeves),
+                         index=sleeves.index, columns=sleeves.columns)
+        mode = ("HRP (де Прадо): "
+                + ", ".join(f"{k}={v:.0%}"
+                            for k, v in w_static.items()))
     elif args.parity:
         w = parity_weights(sleeves)
         mode = "vol-parity (trailing 63, shift 1)"
@@ -275,10 +330,10 @@ def main() -> None:
         mode = "равные"
 
     combo = (sleeves * w).sum(axis=1)
-    m = metrics(combo, rf=args.rf)
-    m_gross = metrics(combo)  # rf=0: инвариантен к масштабу позиции
+    m = metrics(combo, bpy, rf=args.rf)
+    m_gross = metrics(combo, bpy)  # rf=0: инвариантен к масштабу позиции
     n_bars = max(len(combo), 1)
-    ann_ret = float((1.0 + combo).prod() ** (252.0 / n_bars) - 1.0)
+    ann_ret = float((1.0 + combo).prod() ** (bpy / n_bars) - 1.0)
     print(f"\n{BOLD}=== КОМБО ({mode}) ==={RESET}")
     print(f"  Доходность: {m['ret']:+.1%}  (годовая: {ann_ret:+.1%})")
     print(f"  Max DD:     {m['dd']:.1%}")
@@ -299,7 +354,7 @@ def main() -> None:
               f"против T-bills {args.rf:.1%}{RESET}")
     else:
         print(f"  Sharpe:     {m['sharpe']:+.2f}")
-    realized_vol = float(combo.std() * (252.0 ** 0.5))
+    realized_vol = float(combo.std() * (bpy ** 0.5))
     print(f"  Годовая вола комбо: {realized_vol:.1%} "
           f"(доля лимита DD<40%: ~{realized_vol / 0.40:.0%})")
     dd_ok = abs(m["dd"]) < 0.40
@@ -310,7 +365,7 @@ def main() -> None:
     # Годовая таблица в gross Sharpe (фьючерсная рамка): вычет rf из
     # низковольного ряда даёт масштабо-зависимые, вводящие в
     # заблуждение числа (см. NG -2.34 в аудите 2026-07).
-    yb = yearly_breakdown(eq, 252.0)
+    yb = yearly_breakdown(eq, bpy)
     print("\n" + format_yearly_table(yb, "Комбо по годам (gross Sharpe)"))
 
     if args.port_vol:
@@ -319,7 +374,7 @@ def main() -> None:
             max_leverage=args.max_port_lev,
             funding_rate=args.funding_rate,
         )
-        ms = metrics(scaled, rf=args.rf)
+        ms = metrics(scaled, bpy, rf=args.rf)
         print(f"\n{BOLD}=== КОМБО × портфельный VT@"
               f"{args.port_vol:.0%} (плечо кэп "
               f"{args.max_port_lev:.1f}) ==={RESET}")
@@ -341,7 +396,7 @@ def main() -> None:
                   f"фондирование плеча НЕ учтено "
                   f"(--funding-rate 0){RESET}")
         eq_s = (1.0 + scaled).cumprod()
-        yb_s = yearly_breakdown(eq_s, 252.0, rf=args.rf)
+        yb_s = yearly_breakdown(eq_s, bpy, rf=args.rf)
         print("\n" + format_yearly_table(
             yb_s, f"Комбо VT@{args.port_vol:.0%} по годам"))
 

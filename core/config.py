@@ -38,6 +38,34 @@ EQUITY_BASKET = {
 # Мегакапы, искажающие статистику корзины (исключаются из медиан).
 EQUITY_OUTLIERS = ("TSLA", "NVDA")
 
+# Крипто-корзина (yfinance -USD пары). Имена совпадают с локальными
+# прогонами 2026-07f. Для intraday (H4/H1) — ccxt-тракт
+# (data/ccxt_source.py + scripts/fetch_ccxt.py), yfinance intraday
+# ограничен 730 днями и ненадёжен.
+CRYPTO_YF = {
+    "Bitcoin": "BTC-USD", "Ethereum": "ETH-USD", "BNB": "BNB-USD",
+    "XRP": "XRP-USD", "Solana": "SOL-USD", "Cardano": "ADA-USD",
+    "Tron": "TRX-USD", "Litecoin": "LTC-USD", "Polkadot": "DOT-USD",
+    "Chainlink": "LINK-USD", "Bitcoin Cash": "BCH-USD",
+    "Stellar": "XLM-USD", "Cosmos": "ATOM-USD", "Near": "NEAR-USD",
+    "Avalanche": "AVAX-USD",
+    # Uniswap (UNI-USD) исключён: yfinance-история содержит артефакт
+    # листинга/сплита, дающий +4 000 000% доходности и засоряющий
+    # LOO-отчёты. Вернуть только после чистки данных или через ccxt.
+}
+
+# Та же корзина в нотации биржевых пар (USDT-споты) для --source ccxt
+# (H4/H1 через data/ccxt_source.CCXTSource). Файлы:
+# data/crypto/{SYMBOL}_{TF}.parquet, выгрузка scripts/fetch_ccxt.py.
+CRYPTO_CCXT = {
+    "Bitcoin": "BTC-USDT", "Ethereum": "ETH-USDT", "BNB": "BNB-USDT",
+    "XRP": "XRP-USDT", "Solana": "SOL-USDT", "Cardano": "ADA-USDT",
+    "Tron": "TRX-USDT", "Litecoin": "LTC-USDT", "Polkadot": "DOT-USDT",
+    "Chainlink": "LINK-USDT", "Bitcoin Cash": "BCH-USDT",
+    "Stellar": "XLM-USDT", "Cosmos": "ATOM-USDT", "Near": "NEAR-USDT",
+    "Avalanche": "AVAX-USDT",
+}
+
 # Databento continuous futures (roll-adjusted, из parquet-панелей).
 # 2026-07: расширено до фактически выгруженной H4-корзины (12
 # инструментов; scripts/fetch_databento_futures.py --interval 4h).
