@@ -83,6 +83,154 @@ COMMODITY_DATABENTO = [
 INDICES = {"S&P 500": "SPY", "Nasdaq": "QQQ"}
 
 
+# --- Боевые корзины ног (2026-07i, приоритет 1 роадмапа) ---
+# Источник состава: instrument_contribution на ДВУХ источниках, не
+# «из головы». Пересмотр — раз в квартал, не чаще (иначе подгонка).
+
+# Тренд-нога сырьевого v2 (donchian_vt, чистая корзина без балласта).
+DONCH_CORE_COMM = ["CL", "ZS", "SI", "ZL", "HG", "GC"]
+
+# MR-нога сырьевого v2 (mr_lowvol).
+MRLV_CORE_COMM = ["CL", "NG", "SI", "ZW", "ZC", "GC"]
+
+# Балласт крипты — общий для обеих стратегий ансамбля
+# (donchian_vt + tr_ichimoku), вырезается из корзины.
+CRYPTO_BALLAST = ["Litecoin", "Cosmos"]
+
+# Боевая крипто-корзина = полная минус балласт (имена общие для
+# CRYPTO_YF и CRYPTO_CCXT — ключи совпадают).
+CRYPTO_CORE = [n for n in CRYPTO_CCXT if n not in CRYPTO_BALLAST]
+
+
+# --- Типизированные корзины по режиму (REGIME_MAP_2026-07f) ---
+# Вердикты по совпадению LOO-направления на ДВУХ источниках.
+# ТРЕНДОВЫЕ: держатели в тренд-ноге, балласт/нейтрал в MR.
+# MR: держатели в реверсии, балласт в тренде.
+# ФЛЕТ (нейтральные): ни одна нога не выигрывает устойчиво — кандидаты
+# на исключение или отдельный аппарат.
+
+COMM_TREND_ASSETS = ["GC", "CL", "ZL", "HG"]
+COMM_MR_ASSETS = ["NG", "SI", "ZW", "ZC", "ZS"]
+COMM_FLAT_ASSETS = ["PA", "PL", "ZM"]
+
+# yfinance-эквиваленты (полные имена из COMMODITY_YF).
+COMM_TREND_ASSETS_YF = ["Gold", "Crude Oil", "Soybean Oil", "Copper"]
+COMM_MR_ASSETS_YF = [
+    "Natural Gas", "Silver", "Wheat", "Corn", "Soybeans",
+]
+COMM_FLAT_ASSETS_YF = ["Palladium", "Platinum", "Soybean Meal"]
+
+
+# --- Рабочие корзины стратегий-кандидатов (2026-07j скрининг) ---
+# Из instrument_contribution на ДВУХ источниках: пересечение «держать»
+# минус балласт, подтверждённый на обоих. Это НЕ чемпионы — это
+# рабочие некоррелированные кандидаты в ансамбль (цель: пул, не корона).
+HHHL_CORE_COMM = ["CL", "SI", "HG", "ZS", "GC", "NG"]   # tr3_hh_hl
+RIBBON_CORE_COMM = ["ZC", "SI", "ZL", "CL", "GC"]        # tr3_ribbon
+
+# Именованные корзины для CLI: --include @ИМЯ / --exclude @ИМЯ.
+# Ключ — имя константы, значение — список тикеров ИЛИ имён корзины.
+NAMED_BASKETS = {
+    "DONCH_CORE_COMM": DONCH_CORE_COMM,
+    "MRLV_CORE_COMM": MRLV_CORE_COMM,
+    "HHHL_CORE_COMM": HHHL_CORE_COMM,
+    "RIBBON_CORE_COMM": RIBBON_CORE_COMM,
+    "CRYPTO_CORE": CRYPTO_CORE,
+    "CRYPTO_BALLAST": CRYPTO_BALLAST,
+    "COMM_TREND": COMM_TREND_ASSETS,
+    "COMM_MR": COMM_MR_ASSETS,
+    "COMM_FLAT": COMM_FLAT_ASSETS,
+    "COMM_TREND_YF": COMM_TREND_ASSETS_YF,
+    "COMM_MR_YF": COMM_MR_ASSETS_YF,
+    "COMM_FLAT_YF": COMM_FLAT_ASSETS_YF,
+}
+
+
+def resolve_symbols(spec: str) -> list[str]:
+    """Разворачивает CLI-спецификацию активов в список токенов.
+
+    Поддерживает: 'CL,GC,ZS' (прямой список), '@DONCH_CORE_COMM'
+    (именованная корзина из NAMED_BASKETS), смешанное
+    '@COMM_TREND,NG'. Регистр имён корзин не важен.
+
+    Args:
+        spec: Строка из CLI (--include / --exclude).
+
+    Returns:
+        Плоский список токенов (тикеры или имена инструментов).
+
+    Raises:
+        SystemExit: Если @ИМЯ не найдено в NAMED_BASKETS.
+    """
+    out: list[str] = []
+    for token in (t.strip() for t in spec.split(",") if t.strip()):
+        if token.startswith("@"):
+            name = token[1:].upper()
+            if name not in NAMED_BASKETS:
+                known = ", ".join(sorted(NAMED_BASKETS))
+                raise SystemExit(
+                    f"нет именованной корзины '@{name}'. "
+                    f"Известные: {known}")
+            out.extend(NAMED_BASKETS[name])
+        else:
+            out.append(token)
+    return out
+
+
+def filter_basket(
+    basket: dict[str, str],
+    include: str | None = None,
+    exclude: str | None = None,
+) -> dict[str, str]:
+    """Фильтрует корзину {имя: тикер} по CLI-спецификациям.
+
+    Токены матчатся и по имени, и по тикеру (без учёта регистра),
+    поэтому одна и та же команда работает с 'NG' (databento) и
+    'Natural Gas'/'NG=F' (yfinance). Порядок исходной корзины
+    сохраняется. Сначала применяется include, затем exclude.
+
+    Args:
+        basket: Корзина {имя инструмента: тикер источника}.
+        include: Спецификация включения (None = вся корзина).
+        exclude: Спецификация исключения (None = ничего).
+
+    Returns:
+        Отфильтрованная корзина (тот же формат).
+
+    Raises:
+        SystemExit: Если include-токен не нашёл ни одного инструмента
+            (защита от опечатки, из-за которой прогон молча пустеет).
+    """
+    def _norm(s: str) -> str:
+        return s.upper().replace("=F", "").replace("-USDT", "") \
+            .replace("-USD", "")
+
+    def _match(name: str, ticker: str, tokens: list[str]) -> bool:
+        keys = {_norm(name), _norm(ticker)}
+        return any(_norm(t) in keys for t in tokens)
+
+    result = dict(basket)
+    if include:
+        tokens = resolve_symbols(include)
+        result = {n: t for n, t in result.items()
+                  if _match(n, t, tokens)}
+        if not result:
+            raise SystemExit(
+                f"--include '{include}' не совпал ни с одним "
+                f"инструментом корзины: {list(basket)}")
+        missing = [tok for tok in tokens
+                   if not any(_match(n, t, [tok])
+                              for n, t in basket.items())]
+        if missing:
+            print(f"ВНИМАНИЕ: --include токены без совпадения "
+                  f"(пропущены): {missing}")
+    if exclude:
+        tokens = resolve_symbols(exclude)
+        result = {n: t for n, t in result.items()
+                  if not _match(n, t, tokens)}
+    return result
+
+
 # --- Реестр стратегий: имя -> (модуль.функция, класс_актива) ---
 # Класс актива подсказывает раннеру дефолтную корзину.
 

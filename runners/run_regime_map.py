@@ -34,7 +34,8 @@ import numpy as np
 import pandas as pd
 
 from core.config import (
-    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF, EQUITY_BASKET)
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
+    EQUITY_BASKET, filter_basket)
 from core.sizing import make_sizer
 from data.databento_source import DatabentoSource
 from data.ccxt_source import CCXTSource
@@ -119,6 +120,11 @@ def main() -> None:
     p.add_argument("--sizer", default="realized",
                    choices=["realized", "garch"])
     p.add_argument("--target-vol", type=float, default=0.20)
+    p.add_argument("--include", default=None,
+                   help="активы или @КОРЗИНА (например @DONCH_CORE_COMM,"
+                        " CL,GC); см. core.config.NAMED_BASKETS")
+    p.add_argument("--exclude", default=None,
+                   help="активы или @КОРЗИНА для исключения")
     args = p.parse_args()
 
     if not args.trend and not args.mr:
@@ -143,6 +149,8 @@ def main() -> None:
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
         basket = COMMODITY_YF
+    basket = filter_basket(
+        basket, include=args.include, exclude=args.exclude)
 
     print(f"{BOLD}Карта актив×стратегия | {args.basket} | "
           f"{args.source} | vt@{args.target_vol:.0%} | "

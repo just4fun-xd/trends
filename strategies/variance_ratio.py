@@ -129,7 +129,12 @@ def rolling_hurst_vr(
     Returns:
         Ряд H (NaN на прогреве), сдвинутый на 1 бар.
     """
-    logret = np.log(close / close.shift(1)).to_numpy()
+    # Гвард: WTI (CL) на 20.04.2020 печатал ОТРИЦАТЕЛЬНУЮ цену
+    # (историческое событие, не ошибка данных) — log(отрицательное)
+    # даёт RuntimeWarning и NaN. Явно гасим через close<=0 -> NaN
+    # ДО лога, чтобы не полагаться на неявное поведение numpy.
+    safe_close = close.where(close > 0)
+    logret = np.log(safe_close / safe_close.shift(1)).to_numpy()
     n = len(logret)
     out = np.full(n, np.nan)
     last = np.nan

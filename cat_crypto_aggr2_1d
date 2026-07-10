@@ -1,0 +1,13 @@
+set,strategy,basket,source,vt,rank,sharpe
+cat_crypto_aggr2,donchian_vt,crypto,yf,0.40,1,1.2824
+cat_crypto_aggr2,ca2_bns,crypto,yf,0.40,2,1.1365
+cat_crypto_aggr2,ca2_semi,crypto,yf,0.40,3,1.1165
+cat_crypto_aggr2,ca2_breaker,crypto,yf,0.40,4,1.1042
+cat_crypto_aggr2,ca2_vvol,crypto,yf,0.40,5,1.0418
+cat_crypto_aggr2,ca2_evt,crypto,yf,0.40,6,1.0304
+cat_crypto_aggr2,ca2_hawkes,crypto,yf,0.40,7,1.0188
+cat_crypto_aggr2,ca2_skew,crypto,yf,0.40,8,0.9400
+cat_crypto_aggr2,ca2_kelly_t,crypto,yf,0.40,9,0.9335
+cat_crypto_aggr2,tr_ichimoku,crypto,yf,0.40,10,0.8122
+cat_crypto_aggr2,ca2_cppi,crypto,yf,0.40,11,0.7356
+cat_crypto_aggr2,ca2_gz,crypto,yf,0.40,12,0.6254

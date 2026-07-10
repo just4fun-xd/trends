@@ -21,7 +21,8 @@ from __future__ import annotations
 import argparse
 
 from core.config import (
-    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF, EQUITY_BASKET)
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
+    EQUITY_BASKET, filter_basket)
 from core.sizing import make_sizer
 from data.databento_source import DatabentoSource
 from data.ccxt_source import CCXTSource
@@ -43,8 +44,9 @@ def main() -> None:
     """CLI: LOO-вклад инструментов выбранной стратегии на корзине."""
     p = argparse.ArgumentParser(
         description="LOO-вклад инструментов (детектор балласта)")
-    p.add_argument("--strategy", default="donchian_vt",
-                   help="имя стратегии из реестра run_basket")
+    p.add_argument("--strategy", default=["donchian_vt"], nargs="+",
+                   help="одно или несколько имён стратегий из реестра "
+                        "(для пакетного сбора карты актив×стратегия)")
     p.add_argument("--source", default="yf",
                    choices=["yf", "databento", "ccxt"])
     p.add_argument("--basket", default="commodity",
@@ -61,11 +63,20 @@ def main() -> None:
     p.add_argument("--sizer", default="realized",
                    choices=["realized", "garch"])
     p.add_argument("--target-vol", type=float, default=0.15)
+    p.add_argument("--include", default=None,
+                   help="активы или @КОРЗИНА (например @DONCH_CORE_COMM,"
+                        " CL,GC); см. core.config.NAMED_BASKETS")
+    p.add_argument("--exclude", default=None,
+                   help="активы или @КОРЗИНА для исключения")
+    p.add_argument("--csv", default=None,
+                   help="дописать вклад по инструментам в CSV "
+                        "(strategy,basket,source,asset,solo_ret,solo_dd,"
+                        "solo_sharpe,loo_delta,verdict) для карт")
     args = p.parse_args()
 
-    if args.strategy not in STRATEGIES:
-        raise SystemExit(f"нет стратегии '{args.strategy}' в реестре")
-    strategy_fn = STRATEGIES[args.strategy]
+    unknown = [s for s in args.strategy if s not in STRATEGIES]
+    if unknown:
+        raise SystemExit(f"нет стратегий в реестре: {unknown}")
 
     panel_dir = args.panel_dir
     if panel_dir is None:
@@ -87,35 +98,66 @@ def main() -> None:
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
         basket = COMMODITY_YF
+    basket = filter_basket(
+        basket, include=args.include, exclude=args.exclude)
 
     sizer = make_sizer(args.sizer, target_vol=args.target_vol) \
         if args.vt else None
 
     vt_note = (f" | vt:{args.sizer}@{args.target_vol:.0%}"
                if args.vt else "")
-    print(f"{BOLD}Вклад инструментов | {args.strategy} | "
-          f"{args.basket} | {args.source}{vt_note} | "
-          f"{args.start}..{args.end}{RESET}")
 
-    rets, bpy = per_instrument_returns(
-        strategy_fn, basket, source, args.start, args.end,
-        sizer=sizer, cost=args.cost, interval=args.interval,
-    )
-    full = rets.mean(axis=1, skipna=True).fillna(0.0)
-    full_sharpe = _sharpe(full, bpy)
-    df = instrument_contribution(rets, bpy)
-    print("\n" + format_contribution(
-        df, full_sharpe,
-        f"{args.strategy} — вклад по инструментам "
-        f"(сверху вниз: главные кандидаты в балласт)"))
+    csv_rows = []
+    for strat in args.strategy:
+        strategy_fn = STRATEGIES[strat]
+        print(f"{BOLD}Вклад инструментов | {strat} | "
+              f"{args.basket} | {args.source}{vt_note} | "
+              f"{args.start}..{args.end}{RESET}")
+        rets, bpy = per_instrument_returns(
+            strategy_fn, basket, source, args.start, args.end,
+            sizer=sizer, cost=args.cost, interval=args.interval,
+        )
+        full = rets.mean(axis=1, skipna=True).fillna(0.0)
+        full_sharpe = _sharpe(full, bpy)
+        df = instrument_contribution(rets, bpy)
+        print("\n" + format_contribution(
+            df, full_sharpe,
+            f"{strat} — вклад по инструментам "
+            f"(сверху вниз: главные кандидаты в балласт)"))
 
-    ballast = df[df["verdict"].str.startswith("БАЛЛАСТ")]
-    if not ballast.empty:
-        names = ", ".join(ballast.index)
-        print(f"\n{RED}Кандидаты в балласт: {names}{RESET}")
-        print("  Проверить перед исключением: (1) второй источник, "
-              "(2) механизм — почему актив не торгуется этой "
-              "стратегией.")
+        ballast = df[df["verdict"].str.startswith("БАЛЛАСТ")]
+        if not ballast.empty:
+            names = ", ".join(ballast.index)
+            print(f"\n{RED}Кандидаты в балласт: {names}{RESET}")
+            print("  Проверить перед исключением: (1) второй "
+                  "источник, (2) механизм — почему актив не "
+                  "торгуется этой стратегией.")
+        print()
+
+        if args.csv:
+            for asset, row in df.iterrows():
+                csv_rows.append({
+                    "strategy": strat, "basket": args.basket,
+                    "source": args.source, "asset": asset,
+                    "solo_ret": round(float(row["solo_ret"]), 4),
+                    "solo_dd": round(float(row["solo_dd"]), 4),
+                    "solo_sharpe": round(
+                        float(row["solo_sharpe"]), 4),
+                    "loo_delta": round(float(row["loo_delta"]), 4),
+                    "verdict": row["verdict"],
+                })
+
+    if args.csv and csv_rows:
+        import csv as _csv
+        import os
+        new = not os.path.exists(args.csv)
+        with open(args.csv, "a", newline="") as fh:
+            w = _csv.DictWriter(fh, fieldnames=list(csv_rows[0]))
+            if new:
+                w.writeheader()
+            w.writerows(csv_rows)
+        print(f"{BOLD}CSV дописан: {args.csv} "
+              f"(+{len(csv_rows)} строк){RESET}")
 
 
 if __name__ == "__main__":

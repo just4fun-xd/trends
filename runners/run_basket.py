@@ -120,6 +120,86 @@ STRATEGIES.update(TREND_LAB2)
 STRATEGIES["mr_ens_gate"] = with_vol_gate(mr_ensemble)
 STRATEGIES["mr_atr_gate"] = with_vol_gate(
     MEANREV_LAB["mr_atr_stop"])
+# MR-лаборатория 2 (2026-07j): 15 моделей реверсии разного
+# матаппарата — state-space, непараметрика, робастная статистика,
+# энтропия, VR/half-life гейты (strategies/meanrev_lab2.py).
+from strategies.meanrev_lab2 import MEANREV_LAB2  # noqa: E402
+STRATEGIES.update(MEANREV_LAB2)
+# Trend Lab 3 (2026-07j): 15 трендовых — TSMOM, ленты, ADX,
+# SuperTrend, KAMA, свинг-структура, fracdiff (LdP), ZLEMA,
+# биномиальная персистентность, VR-гейт (strategies/trend_lab3.py).
+from strategies.trend_lab3 import TREND_LAB3  # noqa: E402
+STRATEGIES.update(TREND_LAB3)
+# Крипто-AGGR (2026-07j): 10 агрессивных H4-моделей — пирамиды,
+# squeeze, каскады, thrust, шорт-нога (strategies/crypto_aggr_lab.py).
+from strategies.crypto_aggr_lab import CRYPTO_AGGR_LAB  # noqa: E402
+STRATEGIES.update(CRYPTO_AGGR_LAB)
+# Trend Lab 4 (2026-07k): 10 трендовых на незанятом аппарате — PSAR,
+# Renko, Mann-Kendall, AR(1)-гейт, триггер Шмитта, декиклер Элерса,
+# overnight-дрейф, CUSUM Пейджа, Келли, перцентиль momentum.
+from strategies.trend_lab4 import TREND_LAB4  # noqa: E402
+STRATEGIES.update(TREND_LAB4)
+# Крипто-AGGR-2 (2026-07k): агрессивные ядра × кризисный матаппарат —
+# CPPI, Grossman-Zhou, BNS-jump, CVaR, полудисперсия, vol-of-vol,
+# Хоукс, skew-гейт, Келли-t, circuit breaker.
+from strategies.crypto_aggr_lab2 import CRYPTO_AGGR_LAB2  # noqa: E402
+STRATEGIES.update(CRYPTO_AGGR_LAB2)
+# MR Lab 3 (2026-07k): реверсия с упором на извлечение — пороги
+# Бертрама (OU-как-аппарат), GARCH-шок, Келли-MR, грид, овершут,
+# DFA-Хёрст, ранговый шок, хвост-квантиль, AR(1)-прогноз, дивергенция.
+from strategies.meanrev_lab3 import MEANREV_LAB3  # noqa: E402
+STRATEGIES.update(MEANREV_LAB3)
+# Schwartz-Smith (Roadmap D.1, 2026-07k): Kalman-разложение лог-цены
+# на chi (OU) + xi (GBM); MR-нога строго на изолированном chi.
+from strategies.schwartz_smith import SCHWARTZ_SMITH  # noqa: E402
+STRATEGIES.update(SCHWARTZ_SMITH)
+# Доработка mr_lowvol (2026-07k): 5 вариантов чемпиона, по одному
+# узлу на вариант (размер/набор/гейт/выход/двойной гейт).
+from strategies.mr_lowvol2 import MR_LOWVOL2  # noqa: E402
+STRATEGIES.update(MR_LOWVOL2)
+
+
+def _build_families() -> dict[str, str]:
+    """Карта имя стратегии -> семейство ('trend' / 'mean-reversion' /
+    'mixed').
+
+    Источник — членство в лабораторных словарях, не порядок CLI-
+    аргументов (фикс 2026-07j: run_strategy_chart подписывал роли
+    по позиции --a/--b и врал, называя donchian_vt реверсией).
+    """
+    fam: dict[str, str] = {}
+    trend_dicts = (TREND_LAB, TREND_LAB2, TREND_LAB3, TREND_LAB4,
+                   KALMAN_TREND, IMPULSE_LAB, MONDAY_RANGE,
+                   CRYPTO_AGGR_LAB, CRYPTO_AGGR_LAB2)
+    mr_dicts = (MEANREV_LAB, MEANREV_LAB2, MEANREV_LAB3, CARVER_MR,
+                OU_LAB, SCHWARTZ_SMITH, MR_LOWVOL2)
+    for d in trend_dicts:
+        fam.update({k: "trend" for k in d})
+    for d in mr_dicts:
+        fam.update({k: "mean-reversion" for k in d})
+    fam.update({k: "mixed" for k in OU_TREND_LAB})
+    fam.update({
+        "ema_cross": "trend", "ema_ensemble": "trend",
+        "ema_vt": "trend", "ema_barbell": "trend",
+        "donchian": "trend", "donchian_vt": "trend",
+        "champion": "trend", "4step_pyr": "trend",
+        "donchian_est_pyr": "trend",
+        "bb_rsi": "mean-reversion", "bb_rsi_vt": "mean-reversion",
+        "seasonal": "mixed", "seasonal_vt": "mixed",
+        "donch_seasonal": "mixed", "donch_seasonal_vt": "mixed",
+        "ou": "mean-reversion",
+        "mr_ens": "mean-reversion", "mr_ens_gate": "mean-reversion",
+        "mr_atr_gate": "mean-reversion",
+        "ca_short_break": "trend (short)",
+        "combo_tmr": "mixed", "trend_ens": "trend",
+        "mr_kelt_confirm": "mean-reversion",
+        "carver_fdm": "trend", "hurst_combo": "mixed",
+        "donch_vol_confirm": "trend", "hurst_alloc": "mixed",
+    })
+    return fam
+
+
+STRATEGY_FAMILY = _build_families()
 
 
 def _verdict(res: BacktestResult, dd_limit: float = 0.40) -> str:

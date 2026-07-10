@@ -24,6 +24,7 @@ from core.config import (
     CRYPTO_CCXT,
     CRYPTO_YF,
     EQUITY_BASKET,
+    filter_basket,
 )
 from core.engine import run_engine
 from core.sizing import make_sizer
@@ -86,6 +87,11 @@ def main() -> None:
                         "(дыра, найденная Александром; напр. 0.045)")
     p.add_argument("--n-boot", type=int, default=2000)
     p.add_argument("--ci", type=float, default=0.90)
+    p.add_argument("--include", default=None,
+                   help="активы или @КОРЗИНА (например @DONCH_CORE_COMM,"
+                        " CL,GC); см. core.config.NAMED_BASKETS")
+    p.add_argument("--exclude", default=None,
+                   help="активы или @КОРЗИНА для исключения")
     args = p.parse_args()
 
     panel_dir = args.panel_dir or (
@@ -105,6 +111,8 @@ def main() -> None:
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
         basket = COMMODITY_YF
+    basket = filter_basket(
+        basket, include=args.include, exclude=args.exclude)
 
     sizer = (make_sizer(args.sizer, target_vol=args.target_vol)
              if args.vt else None)

@@ -22,7 +22,8 @@ from __future__ import annotations
 import argparse
 
 from core.config import (
-    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF, EQUITY_BASKET)
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
+    EQUITY_BASKET, filter_basket)
 from data.databento_source import DatabentoSource
 from data.ccxt_source import CCXTSource
 from data.yfinance_source import YFinanceSource
@@ -80,8 +81,11 @@ def main() -> None:
     parser.add_argument("--panel-dir", default=None)
     parser.add_argument("--crypto-dir", default="data/crypto")
     parser.add_argument("--exclude", default=None,
-                        help="Инструменты через запятую, исключить из "
-                             "корзины (напр. тонкие H4-рынки: PA,PL)")
+                        help="Активы или @КОРЗИНА, исключить (напр. "
+                             "PA,PL или @COMM_FLAT)")
+    parser.add_argument("--include", default=None,
+                        help="Активы или @КОРЗИНА, оставить только их "
+                             "(напр. @MRLV_CORE_COMM)")
     parser.add_argument("--matrix", action="store_true",
                         help="Печатать полную матрицу год × инструмент")
     args = parser.parse_args()
@@ -106,12 +110,12 @@ def main() -> None:
         else:
             basket = COMMODITY_YF
 
-    if args.exclude:
-        drop = {s.strip() for s in args.exclude.split(",")}
-        removed = [k for k in basket if k in drop]
-        basket = {k: v for k, v in basket.items() if k not in drop}
-        if removed:
-            print(f"Исключены из корзины: {', '.join(removed)}")
+    before = list(basket)
+    basket = filter_basket(
+        basket, include=args.include, exclude=args.exclude)
+    removed = [k for k in before if k not in basket]
+    if removed:
+        print(f"Исключены из корзины: {', '.join(removed)}")
 
     print(f"{BOLD}Walk-forward (anchored, by={args.by}) | {args.basket} "
           f"| {args.source} | {args.start}..{args.end}{RESET}")

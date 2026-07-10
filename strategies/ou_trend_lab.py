@@ -69,7 +69,7 @@ def ou_pullback(bars: Bars, window: int = 20, entry: float = 1.5,
         elif state == 1 and zv[i] > exit_:
             state = 0            # вернулись к центру — выход
         pos[i] = float(state)
-    return pd.Series(pos, index=close.index).shift(1).fillna(0.0)
+    return pd.Series(pos, index=close.index).fillna(0.0)
 
 
 # ── 2. Реверсия к Kalman-тренду ──────────────────────────────────────
@@ -101,7 +101,7 @@ def ou_trendline(bars: Bars, entry: float = 1.5,
         elif state == 1 and (zv[i] > 0 or sv[i] <= 0):
             state = 0
         out[i] = float(state)
-    return pd.Series(out, index=bars.close.index).shift(1).fillna(0.0)
+    return pd.Series(out, index=bars.close.index).fillna(0.0)
 
 
 # ── 3. OU на остатках регрессии ──────────────────────────────────────
@@ -140,7 +140,7 @@ def ou_residual(bars: Bars, window: int = 126,
     pos = pd.Series(0.0, index=y.index)
     pos[long_sig] = 1.0
     pos[short_sig] = -1.0
-    return pos.shift(1).fillna(0.0)
+    return pos.fillna(0.0)
 
 
 # ── 4. MR-вход, тренд-выход ──────────────────────────────────────────
@@ -166,7 +166,7 @@ def ou_ride(bars: Bars, window: int = 20, entry: float = 2.0,
         elif state == 1 and not up[i]:
             state = 0            # выходим по тренду, не по z
         pos[i] = float(state)
-    return pd.Series(pos, index=close.index).shift(1).fillna(0.0)
+    return pd.Series(pos, index=close.index).fillna(0.0)
 
 
 # ── 5. Откуп контр-трендовых гэпов ───────────────────────────────────
@@ -194,7 +194,7 @@ def ou_gap_fade(bars: Bars, k: float = 2.0, hold: int = 5,
         if left > 0:
             pos[i] = 1.0
             left -= 1
-    return pd.Series(pos, index=bars.close.index).shift(1).fillna(0.0)
+    return pd.Series(pos, index=bars.close.index).fillna(0.0)
 
 
 # ── 6. H-роутер со значимостью ───────────────────────────────────────

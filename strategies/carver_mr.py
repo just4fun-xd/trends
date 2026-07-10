@@ -70,7 +70,8 @@ def carver_mr(
         np.tanh(combined.to_numpy() / 2.0), index=close.index)
     if long_only:
         pos = pos.clip(lower=0.0)
-    return pos.shift(1).fillna(0.0)
+    # ФИКС 2026-07j: двойной shift удалён (движок сдвигает сам).
+    return pos.fillna(0.0)
 
 
 def mr_lowvol_soft(

@@ -34,7 +34,11 @@ from core.bars import Bars
 
 
 def _shift01(sig: pd.Series) -> pd.Series:
-    return sig.shift(1).fillna(0.0)
+    # ФИКС 2026-07j: раньше здесь был shift(1) — ДВОЙНОЙ лаг
+    # (движок run_engine сам сдвигает позицию). Лаборатория
+    # торговала на t+2 против t+1 у donchian — фора чемпиону
+    # во всех bootstrap-сравнениях. Имя сохранено от диффа.
+    return sig.fillna(0.0)
 
 
 # ── 1. Регрессионный канал ────────────────────────────────────────────
@@ -128,7 +132,7 @@ def tr_supertrend(bars: Bars, period: int = 10,
         elif close[i] < lb:
             state = -1
         pos[i] = float(state)
-    return pd.Series(pos, index=bars.close.index).shift(1).fillna(0.0)
+    return pd.Series(pos, index=bars.close.index).fillna(0.0)
 
 
 # ── 4. Z-гистограмма MACD ────────────────────────────────────────────
@@ -195,7 +199,7 @@ def tr_fractal(bars: Bars, wing: int = 2) -> pd.Series:
         elif not np.isnan(last_lo) and c[i] < last_lo:
             state = -1
         pos[i] = float(state)
-    return pd.Series(pos, index=bars.close.index).shift(1).fillna(0.0)
+    return pd.Series(pos, index=bars.close.index).fillna(0.0)
 
 
 # ── 7. Ишимоку-лайт ──────────────────────────────────────────────────

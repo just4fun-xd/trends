@@ -1,0 +1,662 @@
+{
+ "ema_cross": {
+  "family": "trend",
+  "module": "ema",
+  "summary": "Базовый EMA-кроссовер: лонг когда fast EMA выше slow EMA."
+ },
+ "ema_ensemble": {
+  "family": "trend",
+  "module": "ema",
+  "summary": "Ансамбль EMA: несколько пар голосуют за направление."
+ },
+ "ema_vt": {
+  "family": "trend",
+  "module": "ema",
+  "summary": "ЧЕМПИОН EMA-трека: ансамбль + vol targeting."
+ },
+ "ema_barbell": {
+  "family": "trend",
+  "module": "ema",
+  "summary": "Барбелл-ансамбль: только короткая и длинная пары + vol targeting."
+ },
+ "donchian": {
+  "family": "trend",
+  "module": "donchian",
+  "summary": "Базовый Дончиан: лонг при пробое N-дневного максимума."
+ },
+ "donchian_vt": {
+  "family": "trend",
+  "module": "donchian",
+  "summary": "Дончиан + EMA-ансамбль (макро-фильтр) + vol targeting."
+ },
+ "champion": {
+  "family": "trend",
+  "module": "donchian",
+  "summary": "★ COMMODITY CHAMPION: 4step + take-profit + MACD + vol targeting."
+ },
+ "4step_pyr": {
+  "family": "trend",
+  "module": "donchian",
+  "summary": "4step pyramid + MACD-фильтр + vol targeting (без take-profit)."
+ },
+ "donchian_est_pyr": {
+  "family": "trend",
+  "module": "donchian",
+  "summary": "Donchian breakout + EMA ensemble filter + pyramiding + vol targeting."
+ },
+ "bb_rsi": {
+  "family": "mean-reversion",
+  "module": "bollinger",
+  "summary": "BB+RSI mean-reversion: лонг на перепроданности у нижней полосы."
+ },
+ "bb_rsi_vt": {
+  "family": "mean-reversion",
+  "module": "bollinger",
+  "summary": "BB+RSI + vol targeting поверх — для портфельного сочетания."
+ },
+ "seasonal": {
+  "family": "mixed",
+  "module": "seasonal",
+  "summary": "Чистый календарь: лонг только в исторически сильные месяцы."
+ },
+ "seasonal_vt": {
+  "family": "mixed",
+  "module": "seasonal",
+  "summary": "Чистый календарь + vol-таргетинг — для портфельного вклада."
+ },
+ "donch_seasonal": {
+  "family": "mixed",
+  "module": "seasonal",
+  "summary": "Дончиан-пробой, отфильтрованный сезонным окном."
+ },
+ "donch_seasonal_vt": {
+  "family": "mixed",
+  "module": "seasonal",
+  "summary": "Сезонный Дончиан + vol-таргетинг (для портфельного сочетания)."
+ },
+ "ou": {
+  "family": "mean-reversion",
+  "module": "ou",
+  "summary": "OU-сигнал по z-score. НЕ автономная — RANGE-нога роутера."
+ },
+ "mr_atr_stop": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 1: базовый вход + ЖЁСТКИЙ ATR-стоп на выход."
+ },
+ "mr_time_stop": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 2: time-stop — выход через max_hold баров без реверсии."
+ },
+ "mr_scaled": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 3: непрерывный сайзинг по глубине растяжения."
+ },
+ "mr_ladder": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 4: двухступенчатый вход (лесенка с жёстким капом)."
+ },
+ "mr_trend": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 5: buy-the-dip — базовый вход ТОЛЬКО выше SMA200."
+ },
+ "mr_lowvol": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 6: режимный фильтр — входы только при спокойной воле."
+ },
+ "mr_keltner": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 7: Keltner-каналы (ATR) вместо Bollinger (std)."
+ },
+ "mr_connors": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 8: классика Connors RSI(2)."
+ },
+ "mr_confirm": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 9: вход на ПОДТВЕРЖДЕНИИ разворота, не на касании."
+ },
+ "mr_short": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab",
+  "summary": "Вариант 10: симметричный ШОРТ перекупленности — ЧЕСТНЫЙ КОНТРОЛЬ."
+ },
+ "mr_ens": {
+  "family": "mean-reversion",
+  "module": "ensemble",
+  "summary": "Равновзвешенное среднее позиций MR-вариантов."
+ },
+ "combo_tmr": {
+  "family": "mixed",
+  "module": "ensemble",
+  "summary": "Комбо тренд + реверсия на одном инструменте (уровень позиции)."
+ },
+ "trend_ens": {
+  "family": "trend",
+  "module": "ensemble",
+  "summary": "Равновзвешенное среднее позиций тренд-моделей."
+ },
+ "mr_kelt_confirm": {
+  "family": "mean-reversion",
+  "module": "ensemble",
+  "summary": "MR-ансамбль из двух декоррелированных членов: keltner + confirm."
+ },
+ "tsmom": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "TSMOM-бейзлайн: лонг, если trailing-доходность положительна."
+ },
+ "tsmom_multi": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Мульти-горизонтный TSMOM: среднее знаков по горизонтам."
+ },
+ "ewmac": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Carver EWMAC: непрерывный прогноз силы тренда, long-only клип."
+ },
+ "donch_multi": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Ансамбль Дончианов по lookback'ам (выход = entry/2)."
+ },
+ "channel_pos": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Непрерывная позиция цены в канале Дончиана."
+ },
+ "kama": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Тренд по адаптивной скользящей Кауфмана (KAMA)."
+ },
+ "chandelier": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Пробой Дончиана + Chandelier-выход (трейлинг от максимума)."
+ },
+ "adx_donch": {
+  "family": "trend",
+  "module": "trend_lab",
+  "summary": "Дончиан с фильтром силы тренда: вход только при ADX > adx_min."
+ },
+ "carver_fdm": {
+  "family": "trend",
+  "module": "advanced",
+  "summary": "Комбинированный непрерывный прогноз Carver с FDM."
+ },
+ "hurst_combo": {
+  "family": "mixed",
+  "module": "advanced",
+  "summary": "Комбо тренд+MR с весами ног по Хёрсту инструмента."
+ },
+ "donch_vol_confirm": {
+  "family": "trend",
+  "module": "advanced",
+  "summary": "Дончиан-пробой, подтверждённый объёмом: вход при z(volume)>z_min."
+ },
+ "hurst_alloc": {
+  "family": "mixed",
+  "module": "hurst_alloc",
+  "summary": "Комбо тренд+MR с весами ног по variance-ratio H инструмента."
+ },
+ "ou_adf": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "OU только там, где ou_fit подтверждает стационарность (ADF)."
+ },
+ "ou_halflife": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "Окно z-score = clip(half-life, 5, 60) инструмента."
+ },
+ "ou_log": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "z по лог-цене: реверсия мультипликативная, не аддитивная."
+ },
+ "ou_robust": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "z = (close − median)/(1.4826·MAD): устойчив к выбросам."
+ },
+ "ou_hurst_gate": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "OU только при VR-H < h_max (инструмент в реверсионном режиме)."
+ },
+ "ou_timestop": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "Выход по времени = median half-life: возврат не пришёл — выходим."
+ },
+ "ou_asym": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "Только лонг перепроданности (для спота/крипты без шорта)."
+ },
+ "ou_kalman": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "z от Kalman local-level: адаптивное среднее вместо rolling."
+ },
+ "ou_volgate": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "Вход только при воле ниже перцентиля: тихое растяжение реверсирует."
+ },
+ "ou_ewma_z": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "z на EWMA-среднем и EWMA-std: быстрее видит смену уровня."
+ },
+ "ou_jump": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "OU-реверсия, подавленная при скачках (jump-diffusion фильтр)."
+ },
+ "ou_jump_asym": {
+  "family": "mean-reversion",
+  "module": "ou_lab",
+  "summary": "ou_jump, но long-only: jump-фильтр + без шорт-ноги."
+ },
+ "kalman_trend": {
+  "family": "trend",
+  "module": "kalman_trend",
+  "summary": "Позиция по знаку/силе Калман-оценённого наклона (тренда)."
+ },
+ "kalman_trend_long": {
+  "family": "trend",
+  "module": "kalman_trend",
+  "summary": "Long-only версия: только положительный наклон (крипта-спот)."
+ },
+ "brk_monday_range": {
+  "family": "trend",
+  "module": "monday_range",
+  "summary": "Позиция по пробою недельного опорного диапазона."
+ },
+ "brk_monday_h4": {
+  "family": "trend",
+  "module": "monday_range",
+  "summary": "Long-only H4-пресет: опорный период — первые сутки недели."
+ },
+ "brk_monday_h1": {
+  "family": "trend",
+  "module": "monday_range",
+  "summary": "Long-only H1-пресет: опорный период — первые сутки недели."
+ },
+ "imp_tsmom_vw": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Средний знак vol-нормированного momentum по горизонтам."
+ },
+ "imp_accel": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Импульс = производная EWMAC: тренд не просто есть, он НАРАСТАЕТ."
+ },
+ "imp_tstat": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Тренд как СТАТИСТИЧЕСКИ ЗНАЧИМЫЙ наклон регрессии."
+ },
+ "imp_52h": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Позиция по близости к N-барному максимуму."
+ },
+ "imp_atr_break": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Насколько цена вышла за ATR-канал, в единицах ATR (tanh)."
+ },
+ "imp_vol_expand": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Направление тренда, гейтованное РАСШИРЕНИЕМ диапазона."
+ },
+ "imp_skip_mom": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Momentum за год БЕЗ последнего месяца (12-1, Jegadeesh-Titman)."
+ },
+ "imp_parkinson": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Пробой, нормированный волой Паркинсона (high-low)."
+ },
+ "imp_drawup": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Кто ближе: rolling-max или rolling-min. Тренд = жить у максимума."
+ },
+ "imp_kalman_imp": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Kalman-наклон, гейтованный его же РОСТОМ: только разгон."
+ },
+ "carver_fast": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Carver на быстрых EWMAC (см. carver_fdm): реактивный профиль."
+ },
+ "carver_ls": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Carver long+short: шорт-нога для фьючерсов/перпетуалов."
+ },
+ "carver_hicap": {
+  "family": "trend",
+  "module": "impulse_lab",
+  "summary": "Carver с агрессивным насыщением: cap 30, FDM до 4."
+ },
+ "carver_mr": {
+  "family": "mean-reversion",
+  "module": "carver_mr",
+  "summary": "Реверсионный ансамбль z-осцилляторов со скейлингом Карвера."
+ },
+ "mr_lowvol_soft": {
+  "family": "mean-reversion",
+  "module": "carver_mr",
+  "summary": "mr_lowvol с НЕПРЕРЫВНЫМ vol-гейтом (логистика вместо порога)."
+ },
+ "ou_pullback": {
+  "family": "mixed",
+  "module": "ou_trend_lab",
+  "summary": "Покупка OU-провала ТОЛЬКО в аптренде; выход к центру или по тренду."
+ },
+ "ou_trendline": {
+  "family": "mixed",
+  "module": "ou_trend_lab",
+  "summary": "OU к ДВИЖУЩЕМУСЯ центру: Kalman-уровень вместо плоского mean."
+ },
+ "ou_residual": {
+  "family": "mixed",
+  "module": "ou_trend_lab",
+  "summary": "Детренд rolling-регрессией; OU на остатках, направление по наклону."
+ },
+ "ou_ride": {
+  "family": "mixed",
+  "module": "ou_trend_lab",
+  "summary": "Вход по растяжению, выход по СМЕРТИ ТРЕНДА (не по возврату z)."
+ },
+ "ou_gap_fade": {
+  "family": "mixed",
+  "module": "ou_trend_lab",
+  "summary": "Откуп резкого провала ПО тренду, если это не скачок уровня."
+ },
+ "ou_router": {
+  "family": "mixed",
+  "module": "ou_trend_lab",
+  "summary": "Роутер: значимый тренд -> donchian; значимая реверсия -> OU-fade."
+ },
+ "tr_regress": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "t-stat наклона × сторона от линии: значимый тренд И цена с ним."
+ },
+ "tr_holt": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Тренд-компонента Хольта (ETS): классика до-калмановской эпохи."
+ },
+ "tr_supertrend": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "ATR-полоса с перекладкой: культовый трейлинг-переключатель."
+ },
+ "tr_macd_hz": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Гистограмма MACD (момент минус его среднее) в z-шкале."
+ },
+ "tr_vhf": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Направление EMA-наклона ТОЛЬКО в трендовом режиме по VHF."
+ },
+ "tr_fractal": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Пробой последнего ПОДТВЕРЖДЁННОГО свинг-максимума (структура)."
+ },
+ "tr_ichimoku": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Tenkan/Kijun композит: двойное подтверждение направления."
+ },
+ "tr_er": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Позиция = знак хода × эффективность Кауфмана (чистота тренда)."
+ },
+ "tr_zlema": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Кросс ZLEMA: EMA с компенсацией лага (де-лаг входного ряда)."
+ },
+ "tr_hull": {
+  "family": "trend",
+  "module": "trend_lab2",
+  "summary": "Знак и сила наклона Hull MA (WMA-каскад минимального лага)."
+ },
+ "mr_ens_gate": {
+  "family": "mean-reversion",
+  "module": "overlays",
+  "summary": "Позиция базовой стратегии, обнулённая при взрыве волы."
+ },
+ "mr_atr_gate": {
+  "family": "mean-reversion",
+  "module": "overlays",
+  "summary": "Позиция базовой стратегии, обнулённая при взрыве волы."
+ },
+ "mr2_kalman_z": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Реверсия к Kalman-уровню: вход при остатке < -z_in сигм."
+ },
+ "mr2_quantile": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Непараметрический канал: вход ниже q10, выход выше медианы."
+ },
+ "mr2_runs": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Серия из run падений подряд -> лонг на hold баров."
+ },
+ "mr2_entropy": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Z-вход разрешён только при ВЫСОКОЙ энтропии (шумовой режим)."
+ },
+ "mr2_halflife": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Z-вход только при короткой полужизни AR(1)-отклонений."
+ },
+ "mr2_vr": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Z-вход только при VR(q) < vr_max (анти-персистентность)."
+ },
+ "mr2_mad": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Растяжение в единицах MAD от скользящей медианы."
+ },
+ "mr2_cusum": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "CUSUM-накопитель отрицательных отклонений как триггер входа."
+ },
+ "mr2_shock": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Однобарный шок вниз < -shock EWMA-сигм -> лонг на hold баров."
+ },
+ "mr2_skew": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Z-вход при сильно отрицательной скользящей скошенности."
+ },
+ "mr2_theil": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Отклонение от робастной линии Тейла-Сена в единицах MAD."
+ },
+ "mr2_ddband": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Просадка от N-барного максимума глубже k*ATR при слабом RSI."
+ },
+ "mr2_tema_dev": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Растяжение от TEMA: центр почти без лага."
+ },
+ "mr2_percb_bw": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "%B < 0 только когда bandwidth ВЫШЕ своей медианы."
+ },
+ "mr2_soft_z": {
+  "family": "mean-reversion",
+  "module": "meanrev_lab2",
+  "summary": "Непрерывная позиция: логистическая функция от -z, без порогов."
+ },
+ "tr3_tsmom": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Классический time-series momentum: средний знак доходностей."
+ },
+ "tr3_ribbon": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Доля соседних EMA-пар в бычьем порядке (быстрая > медленной)."
+ },
+ "tr3_adx_di": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Wilder: тренд есть (ADX > порога) и направлен вверх (+DI > -DI)."
+ },
+ "tr3_supertrend": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "ATR-трейлинг с перекидкой: лонг, пока цена над нижней лентой."
+ },
+ "tr3_kama_slope": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "KAMA растёт устойчиво -> лонг (наклон адаптивного сглаживания)."
+ },
+ "tr3_hh_hl": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Чартистская структура: последние свинги дают HH и HL."
+ },
+ "tr3_fracdiff": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Знак сглаженного дробно-дифференцированного лог-ряда."
+ },
+ "tr3_zlema": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Цена над РАСТУЩЕЙ zero-lag EMA (Ehlers: компенсация лага)."
+ },
+ "tr3_persist": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Доля растущих баров за окно выше биномиального порога."
+ },
+ "tr3_vr_trend": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Гейт VR(q) > vr_min + цена над MA (зеркало mr2_vr)."
+ },
+ "tr3_mid_ride": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Лонг, пока цена над серединой Дончиана И середина растёт."
+ },
+ "tr3_atr_mom": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Непрерывная позиция tanh(momentum / (ATR * sqrt(окна)))."
+ },
+ "tr3_vote3": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Большинство из трёх: цена выше EMA короткого/среднего/длинного."
+ },
+ "tr3_range_exp": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Диапазон бара > expand * средний И закрытие в верхней трети."
+ },
+ "tr3_extreme_t": {
+  "family": "trend",
+  "module": "trend_lab3",
+  "summary": "Максимум окна свежее минимума с запасом -> лонг."
+ },
+ "ca_turbo_don": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "Быстрый Дончиан 10/5 + докупка на каждом новом максимуме."
+ },
+ "ca_squeeze_pop": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "Полосы Боллинджера внутри Кельтнера -> пробой в сторону выхода."
+ },
+ "ca_accel": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "EWMAC растёт И его производная растёт: вторая производная цены."
+ },
+ "ca_thrust": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "RSI пробивает 62 снизу при растущей воле -> держать до <45."
+ },
+ "ca_chand": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "EMA-кросс вход + Chandelier ATR-трейлинг + мгновенный re-entry."
+ },
+ "ca_double_don": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "Пробой быстрого канала ТОЛЬКО при пробитом медленном."
+ },
+ "ca_burst": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "Бар размером > k*ATR -> ехать в его сторону hold баров. L/S."
+ },
+ "ca_vol_ride": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "Анти-lowvol: лонг при РАСТУЩЕЙ воле и цене над MA."
+ },
+ "ca_short_break": {
+  "family": "trend (short)",
+  "module": "crypto_aggr_lab",
+  "summary": "Зеркальный Дончиан ВНИЗ: шорт на пробое минимума. [-1, 0]."
+ },
+ "ca_pyramid_max": {
+  "family": "trend",
+  "module": "crypto_aggr_lab",
+  "summary": "Докупка +0.5 на каждом шаге step_atr*ATR выше входа, стоп ATR."
+ }
+}

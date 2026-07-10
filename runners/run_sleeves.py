@@ -40,7 +40,8 @@ import pandas as pd
 
 from core.config import (
     COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
-    EQUITY_BASKET)
+    EQUITY_BASKET, NAMED_BASKETS,
+    resolve_symbols)
 from core.engine import run_engine
 from core.sizing import (
     breakeven_funding_rate,
@@ -254,7 +255,14 @@ def main() -> None:
         core_spec = spec
         if "@" in spec:
             core_spec, inc_str = spec.split("@", 1)
-            include = {s.strip() for s in inc_str.split(",") if s.strip()}
+            # 2026-07j: @ИМЯ_КОРЗИНЫ разворачивается из
+            # core.config.NAMED_BASKETS (напр.
+            # donchian_vt:commodity:vt@DONCH_CORE_COMM) — боевые
+            # корзины зафиксированы в конфиге, не перенабираются руками.
+            tokens = [t.strip() for t in inc_str.split(",") if t.strip()]
+            tokens = ["@" + t if t.upper() in NAMED_BASKETS
+                      and not t.startswith("@") else t for t in tokens]
+            include = set(resolve_symbols(",".join(tokens)))
         parts = core_spec.split(":")
         strat, basket_name = parts[0], parts[1]
         # Третье поле: vt (realized) или garch — сайзер sleeve'а.

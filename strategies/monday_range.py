@@ -91,7 +91,8 @@ def monday_range(
         elif close[i] < dn:
             state = 0 if long_only else -1
         pos[i] = float(state)
-    return pd.Series(pos, index=idx).shift(1).fillna(0.0)
+    # ФИКС 2026-07j: двойной shift удалён (движок сдвигает сам).
+    return pd.Series(pos, index=idx).fillna(0.0)
 
 
 def monday_range_h4(bars: Bars) -> pd.Series:

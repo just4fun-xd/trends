@@ -24,7 +24,8 @@ import argparse
 import numpy as np
 
 from core.config import (
-    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF, EQUITY_BASKET)
+    COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
+    EQUITY_BASKET, filter_basket)
 from core.engine import run_engine
 from core.sizing import make_sizer
 from data.databento_source import DatabentoSource
@@ -66,6 +67,11 @@ def main() -> None:
                         "target_vol выше realized_vol -> плечо; при "
                         "упоре в этот кэп Sharpe перестаёт расти "
                         "(плоский хвост = кэп, не рост edge).")
+    p.add_argument("--include", default=None,
+                   help="активы или @КОРЗИНА (например @DONCH_CORE_COMM,"
+                        " CL,GC); см. core.config.NAMED_BASKETS")
+    p.add_argument("--exclude", default=None,
+                   help="активы или @КОРЗИНА для исключения")
     args = p.parse_args()
 
     if args.strategy not in STRATEGIES:
@@ -91,6 +97,8 @@ def main() -> None:
         basket = {s: s for s in COMMODITY_DATABENTO}
     else:
         basket = COMMODITY_YF
+    basket = filter_basket(
+        basket, include=args.include, exclude=args.exclude)
 
     print(f"{BOLD}Пер-инструментный VT-sweep | {args.strategy} | "
           f"{args.basket} | {args.source} | DD<{args.dd_limit:.0%} | "

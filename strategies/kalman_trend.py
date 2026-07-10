@@ -109,7 +109,8 @@ def kalman_trend(
     z = slope_s / scale.replace(0.0, np.nan)
     sig = np.tanh(z / 1.5)
     sig = sig.rolling(smooth, min_periods=1).mean()
-    return sig.shift(1).fillna(0.0)
+    # ФИКС 2026-07j: двойной shift удалён (движок сдвигает сам).
+    return sig.fillna(0.0)
 
 
 def kalman_trend_long(bars: Bars, **kw) -> pd.Series:

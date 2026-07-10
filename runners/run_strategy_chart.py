@@ -27,7 +27,7 @@ from core.sizing import make_sizer
 from data.ccxt_source import CCXTSource
 from data.databento_source import DatabentoSource
 from data.yfinance_source import YFinanceSource
-from runners.run_basket import STRATEGIES
+from runners.run_basket import STRATEGIES, STRATEGY_FAMILY
 
 
 def _series(bars, strat_fn, sizer, cost):
@@ -107,6 +107,11 @@ def main() -> None:
         "ticker": args.ticker,
         "sharpeA": round(_sharpe(eq_a, bars.bars_per_year), 2),
         "sharpeB": round(_sharpe(eq_b, bars.bars_per_year), 2),
+        # Семейства из реестра, НЕ из порядка аргументов (фикс
+        # 2026-07j: подпись врала, называя donchian_vt реверсией,
+        # если он передан вторым).
+        "famA": STRATEGY_FAMILY.get(args.a, "strategy"),
+        "famB": STRATEGY_FAMILY.get(args.b, "strategy"),
     }
     html = _HTML.replace("__DATA__", json.dumps(payload))
     with open(args.out, "w") as f:
@@ -129,10 +134,6 @@ _HTML = """<!DOCTYPE html>
 <title>Strategy Behavior</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/\
 chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/\
-hammerjs/2.0.8/hammer.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/\
-chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
 <style>
  body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;
    background:#0f1117;color:#e6e6e6;margin:0;padding:20px;
@@ -145,8 +146,9 @@ chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
    text-transform:uppercase;letter-spacing:.04em;
    display:flex;justify-content:space-between;align-items:center}
  .wrap{position:relative;width:100%}
- .wrap.top{height:56vh}.wrap.bot{height:26vh}
- canvas{width:100%!important;height:100%!important}
+ .wrap.top{height:52vh}.wrap.bot{height:24vh}
+ canvas{width:100%!important;height:100%!important;cursor:grab}
+ canvas.dragging{cursor:grabbing}
  .btn{background:#252a37;color:#c3c9d6;border:1px solid #333a4a;
    border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;
    margin-left:6px}
@@ -157,75 +159,142 @@ chartjs-plugin-zoom/2.0.1/chartjs-plugin-zoom.min.js"></script>
    margin-right:5px;vertical-align:middle}
  .hint{color:#6b7280;font-size:11px;font-weight:400;
    text-transform:none;letter-spacing:0}
+ details{margin-bottom:14px}
+ summary{cursor:pointer;color:#8b93a7;font-size:13px;font-weight:600}
+ .help{color:#aab2c4;font-size:13px;line-height:1.55;max-width:900px}
+ .help b{color:#e6e6e6}
+ .help .sw{display:inline-block;width:10px;height:10px;
+   border-radius:2px;margin:0 4px 0 2px;vertical-align:baseline}
 </style></head><body>
 <h1 id="ttl"></h1>
 <div class="sub" id="sub"></div>
+<details><summary>How to read this chart</summary>
+<div class="help"><p><b>Everything starts at 100 — that is
+normalization, not a bug.</b> All three lines are rescaled so that
+their first value equals 100. This puts dollars-per-barrel, index
+points and strategy P&amp;L on one comparable scale: a value of 117
+simply means +17% cumulative growth since the first date.</p>
+<p><span class="sw" style="background:#5a6070"></span><b>Price
+(grey, right axis)</b> — growth of $100 invested in the asset
+itself (buy &amp; hold). This is the benchmark: if a strategy line
+is below the grey line over a stretch, the strategy underperformed
+simply holding the asset there (usually with far less risk —
+compare how smooth the lines are, not only how high).</p>
+<p><span class="sw" style="background:#4f9dff"></span><span
+class="sw" style="background:#ff8c42"></span><b>Equity curves
+(left axis)</b> — growth of $100 given to each strategy. Flat
+shelves = the strategy is out of the market (P&amp;L frozen);
+sloped segments = in a position. The two y-axes have different
+ranges, so compare shapes across axes, not absolute heights.</p>
+<p><b>Bottom panel — position size over time.</b> Height is the
+applied position after vol-targeting, so it can exceed 1.0 (e.g.
+1.08 = 108% notional because volatility was low) or stay below it.
+Zero = out of the market. This panel explains the shelves above:
+equity only moves while a position bar is non-zero.</p>
+<p><b>Controls:</b> mouse wheel = zoom around cursor, drag = pan,
+◀ ▶ = step left/right, Reset = full range. Both panels always show
+the same time window.</p></div></details>
 <div class="card"><p class="lbl">
  <span>Equity curves (left axis) &amp; price (right axis)</span>
  <span class="hint">wheel = zoom &middot; drag = pan &middot; synced
-  <button class="btn" onclick="resetAll()">Reset</button>
+  <button class="btn" onclick="stepView(-0.2)">&#9664;</button>
+  <button class="btn" onclick="stepView(0.2)">&#9654;</button>
+  <button class="btn" onclick="resetView()">Reset</button>
   <button class="btn" id="logBtn" onclick="tog()">Log scale</button>
  </span></p>
  <div class="wrap top"><canvas id="main"></canvas></div></div>
 <div class="card"><p class="lbl">
  <span>Position over time &mdash; when each strategy is in the market</span>
  <span class="hint">
-  <button class="btn" onclick="resetAll()">Reset</button></span></p>
+  <button class="btn" onclick="stepView(-0.2)">&#9664;</button>
+  <button class="btn" onclick="stepView(0.2)">&#9654;</button>
+  <button class="btn" onclick="resetView()">Reset</button></span></p>
  <div class="wrap bot"><canvas id="pos"></canvas></div>
  <div class="legend" id="poslegend"></div></div>
 <script>
-// Плагин зума в UMD-сборке кладётся в window как ChartZoom / \
-chartjs-plugin-zoom;
-// без явной регистрации zoom/pan молча не работают, а resetZoom() — no-op.
-if (window.ChartZoom) { Chart.register(window.ChartZoom); }
-else if (window['chartjs-plugin-zoom']) {
-  Chart.register(window['chartjs-plugin-zoom']); }
 const D = __DATA__;
 document.getElementById('ttl').textContent =
-  D.ticker+' \u2014 '+D.nameA+' (trend) vs '+D.nameB+' (mean-reversion)';
+  D.ticker+' \u2014 '+D.nameA+' ('+D.famA+') vs '+D.nameB+
+  ' ('+D.famB+')';
 document.getElementById('sub').textContent =
   'Sharpe: '+D.nameA+' '+D.sharpeA+'  |  '+D.nameB+' '+D.sharpeB+
   (D.combo ? '  |  50/50 combo shown' : '');
 const gA='#4f9dff',gB='#ff8c42',gP='#5a6070',gC='#3ddc84';
-let syncing=false;
-// Синхронизация обоих графиков: когда один зумят/панят по X, второй
-// повторяет тот же диапазон X.
-function syncFrom(src,dst){
- if(syncing) return; syncing=true;
- const sx=src.scales.x;
- dst.options.scales.x.min=sx.min; dst.options.scales.x.max=sx.max;
- dst.update('none'); syncing=false;
+const N=D.dates.length;
+// ЕДИНОЕ состояние вьюпорта (индексы в category-оси). Плагин зума
+// удалён: его состояние конфликтовало с ручной синхронизацией осей
+// (Reset масштабировал панели по-разному), а drag-pan требовал
+// Hammer.js и молча не работал. Здесь всё детерминированно.
+let view={min:0,max:N-1};
+function applyView(){
+ for(const c of [mainC,posC]){
+  c.options.scales.x.min=view.min;
+  c.options.scales.x.max=view.max;
+  c.update('none');
+ }
 }
-function mkZoom(getPartner){return{
- zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',
-   onZoom:({chart})=>syncFrom(chart,getPartner())},
- pan:{enabled:true,mode:'x',threshold:5,
-   onPanComplete:({chart})=>syncFrom(chart,getPartner()),
-   onPan:({chart})=>syncFrom(chart,getPartner())}};}
-function resetAll(){
- // Синк оставляет min/max на партнёре — их надо снять, иначе resetZoom
- // сбрасывает только «родной» график, а второй держит старый диапазон.
- [mainC,posC].forEach(c=>{
-   c.options.scales.x.min=undefined;
-   c.options.scales.x.max=undefined;});
- mainC.resetZoom(); posC.resetZoom();
- mainC.update('none'); posC.update('none');}
+function clampView(){
+ const span=Math.max(10,view.max-view.min);
+ if(view.min<0){view.min=0;view.max=Math.min(N-1,span);}
+ if(view.max>N-1){view.max=N-1;view.min=Math.max(0,N-1-span);}
+}
+function resetView(){view={min:0,max:N-1};applyView();}
+function stepView(frac){
+ const span=view.max-view.min;
+ const d=Math.round(span*frac)||Math.sign(frac);
+ view.min+=d;view.max+=d;clampView();applyView();
+}
+function zoomAt(canvas,evt,factor){
+ const rect=canvas.getBoundingClientRect();
+ const fx=(evt.clientX-rect.left)/rect.width;   // 0..1 позиция курсора
+ const span=view.max-view.min;
+ const newSpan=Math.max(10,Math.min(N-1,Math.round(span*factor)));
+ const anchor=view.min+span*fx;
+ view.min=Math.round(anchor-newSpan*fx);
+ view.max=view.min+newSpan;
+ clampView();applyView();
+}
+function attachNav(canvas){
+ canvas.addEventListener('wheel',e=>{
+  e.preventDefault();
+  zoomAt(canvas,e,e.deltaY>0?1.25:0.8);
+ },{passive:false});
+ let dragging=false,lastX=0;
+ canvas.addEventListener('pointerdown',e=>{
+  dragging=true;lastX=e.clientX;
+  canvas.classList.add('dragging');
+  canvas.setPointerCapture(e.pointerId);
+ });
+ canvas.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const rect=canvas.getBoundingClientRect();
+  const span=view.max-view.min;
+  const dIdx=Math.round((e.clientX-lastX)/rect.width*span);
+  if(dIdx!==0){
+   view.min-=dIdx;view.max-=dIdx;lastX=e.clientX;
+   clampView();applyView();
+  }
+ });
+ const stop=e=>{dragging=false;canvas.classList.remove('dragging');};
+ canvas.addEventListener('pointerup',stop);
+ canvas.addEventListener('pointerleave',stop);
+}
 const eqDs=[
  {label:D.nameA+' equity',data:D.eqA,borderColor:gA,borderWidth:1.8,
   pointRadius:0,tension:.1,yAxisID:'y'},
  {label:D.nameB+' equity',data:D.eqB,borderColor:gB,borderWidth:1.8,
   pointRadius:0,tension:.1,yAxisID:'y'},
- {label:'Price',data:D.price,borderColor:gP,borderWidth:1.2,
-  pointRadius:0,tension:.1,yAxisID:'yP'}];
+ {label:'Price (buy&hold)',data:D.price,borderColor:gP,
+  borderWidth:1.2,pointRadius:0,tension:.1,yAxisID:'yP'}];
 if(D.combo) eqDs.splice(2,0,{label:'Combo equity',data:D.combo,
   borderColor:gC,borderWidth:2,pointRadius:0,tension:.1,
   borderDash:[4,3],yAxisID:'y'});
 const mainC=new Chart(document.getElementById('main'),{type:'line',
  data:{labels:D.dates,datasets:eqDs},
- options:{responsive:true,maintainAspectRatio:false,
+ options:{responsive:true,maintainAspectRatio:false,animation:false,
   interaction:{mode:'index',intersect:false},
   plugins:{legend:{labels:{color:'#c3c9d6',boxWidth:14,
-   font:{size:11}}},zoom:mkZoom(()=>posC)},
+   font:{size:11}}}},
   scales:{
    x:{ticks:{color:'#6b7280',maxTicksLimit:12},
     grid:{color:'#1e2330'}},
@@ -234,31 +303,46 @@ const mainC=new Chart(document.getElementById('main'),{type:'line',
     title:{display:true,text:'equity (start=100)',color:'#8b93a7'}},
    yP:{position:'right',ticks:{color:'#5a6070'},
     grid:{drawOnChartArea:false},
-    title:{display:true,text:'price (start=100)',color:'#8b93a7'}}}}});
+    title:{display:true,text:'price (start=100)',
+     color:'#8b93a7'}}}}});
 const posC=new Chart(document.getElementById('pos'),{type:'line',
  data:{labels:D.dates,datasets:[
   {label:D.nameA,data:D.posA,borderColor:gA,backgroundColor:gA+'22',
    borderWidth:1.4,pointRadius:0,fill:true,stepped:true},
   {label:D.nameB,data:D.posB,borderColor:gB,backgroundColor:gB+'22',
    borderWidth:1.4,pointRadius:0,fill:true,stepped:true}]},
- options:{responsive:true,maintainAspectRatio:false,
+ options:{responsive:true,maintainAspectRatio:false,animation:false,
   interaction:{mode:'index',intersect:false},
-  plugins:{legend:{display:false},zoom:mkZoom(()=>mainC)},
+  plugins:{legend:{display:false}},
   scales:{x:{ticks:{color:'#6b7280',maxTicksLimit:12},
    grid:{color:'#1e2330'}},
    y:{ticks:{color:'#6b7280'},grid:{color:'#1e2330'},
     title:{display:true,text:'position size',color:'#8b93a7'}}}}});
+attachNav(document.getElementById('main'));
+attachNav(document.getElementById('pos'));
 let isLog=false;
 function tog(){isLog=!isLog;
  mainC.options.scales.y.type=isLog?'logarithmic':'linear';
  mainC.options.scales.yP.type=isLog?'logarithmic':'linear';
  document.getElementById('logBtn').textContent=
   isLog?'Linear scale':'Log scale';mainC.update();}
+// Роли в легенде — из реестра семейств (D.famA/famB), не из порядка
+// аргументов: раньше первая стратегия всегда подписывалась trend,
+// вторая mean-reversion, что врало при обратном порядке.
+function famNote(f){
+ if(f==='trend')
+  return ' \u2014 trend: in market during directional moves';
+ if(f.indexOf('trend')===0)
+  return ' \u2014 '+f+': in market during directional moves';
+ if(f==='mean-reversion')
+  return ' \u2014 mean-reversion: in market during pullbacks/chop';
+ return ' \u2014 '+f;
+}
 document.getElementById('poslegend').innerHTML=
  '<span><span class="dot" style="background:'+gA+'"></span>'+D.nameA+
- ' \u2014 trend: in market during directional moves</span>'+
+ famNote(D.famA)+'</span>'+
  '<span><span class="dot" style="background:'+gB+'"></span>'+D.nameB+
- ' \u2014 mean-reversion: in market during pullbacks/chop</span>';
+ famNote(D.famB)+'</span>';
 </script></body></html>
 """
 
