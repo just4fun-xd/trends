@@ -177,9 +177,9 @@ class HMMDetector(RegimeDetector):
             NotImplementedError: Всегда. Заглушка под будущую реализацию.
         """
         raise NotImplementedError(
-            "HMMDetector — заглушка под трек 2.2 (HMM Regime Detection). "
-            "Реализация требует прохождения трека: Baum-Welch калибровка, "
-            "forward-фильтрация, выбор K на train. Не выдумываем результат "
-            "до прохождения трека. Используй VolatilityRegimeDetector для "
-            "отладки архитектуры роутера."
+            "HMMDetector is a stub for track 2.2 (HMM Regime Detection). "
+            "Implementation needs the track: Baum-Welch calibration, "
+            "forward filtering, choosing K on train. We do not fabricate a "
+            "result before the track. Use VolatilityRegimeDetector to "
+            "debug the router architecture."
         )

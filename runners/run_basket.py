@@ -31,7 +31,7 @@ from strategies import bollinger, donchian, ema, seasonal
 from strategies.advanced import ADVANCED
 from strategies.ensemble import ENSEMBLES, mr_ensemble
 from strategies.overlays import with_vol_gate
-from strategies.trend_lab import TREND_LAB
+from strategies.trend_lab import TREND_LAB, TSMOM_VARIANTS
 from strategies.meanrev_lab import MEANREV_LAB
 from strategies.ou import ou_zscore
 
@@ -79,6 +79,8 @@ STRATEGIES.update(ENSEMBLES)
 # Лаборатория тренда: пакет мат-моделей для пере-выбора чемпиона
 # (strategies/trend_lab.py, дисклеймер multiple testing там же).
 STRATEGIES.update(TREND_LAB)
+# Per-asset TSMOM (дедуп tr3_tsmom, 10.07.26): tsmom_eq/cr1d/cr4h/comm.
+STRATEGIES.update(TSMOM_VARIANTS)
 # Продвинутый мат-аппарат (2026-07e): Carver FDM, Hurst-аллокатор,
 # volume-подтверждение (strategies/advanced.py).
 STRATEGIES.update(ADVANCED)
@@ -168,8 +170,8 @@ def _build_families() -> dict[str, str]:
     по позиции --a/--b и врал, называя donchian_vt реверсией).
     """
     fam: dict[str, str] = {}
-    trend_dicts = (TREND_LAB, TREND_LAB2, TREND_LAB3, TREND_LAB4,
-                   KALMAN_TREND, IMPULSE_LAB, MONDAY_RANGE,
+    trend_dicts = (TREND_LAB, TSMOM_VARIANTS, TREND_LAB2, TREND_LAB3,
+                   TREND_LAB4, KALMAN_TREND, IMPULSE_LAB, MONDAY_RANGE,
                    CRYPTO_AGGR_LAB, CRYPTO_AGGR_LAB2)
     mr_dicts = (MEANREV_LAB, MEANREV_LAB2, MEANREV_LAB3, CARVER_MR,
                 OU_LAB, SCHWARTZ_SMITH, MR_LOWVOL2)

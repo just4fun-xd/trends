@@ -45,8 +45,10 @@ def add_cli_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--start", default="2015-01-01")
     parser.add_argument("--end", default="2025-01-01")
     parser.add_argument("--out", default="data/panels")
-    parser.add_argument("--interval", default="1d", choices=["1d", "4h"],
-                        help="Таймфрейм панелей: 1d или 4h (ресемпл 1h)")
+    parser.add_argument("--interval", default="1d",
+                        choices=["1d", "4h", "1h"],
+                        help="Таймфрейм панелей: 1d, 4h (ресемпл 1h) "
+                             "или 1h (часовые как есть, для MR)")
     parser.add_argument("--demo", action="store_true",
                         help="Синтетические панели без API (тест труб)")
 

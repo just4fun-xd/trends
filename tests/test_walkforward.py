@@ -1,10 +1,10 @@
-"""Тесты walk-forward диагностики.
+"""Walk-forward diagnostics tests.
 
-Ключевая проверка: движок ДОЛЖЕН различать стратегию со стабильным
-результатом из года в год и стратегию-мираж, живущую на одном везучем
-окне. Если не различает — метрика бесполезна.
+Key check: the engine MUST tell apart a strategy with a stable
+year-over-year result and a mirage strategy living on one lucky window.
+If it cannot, the metric is useless.
 
-Запуск: python -m tests.test_walkforward
+Run: python -m tests.test_walkforward
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from diagnostics.walkforward import (
 
 
 def _bars_5y(seed=0) -> Bars:
-    """5-летний ряд для нарезки на годовые окна."""
+    """5-year series to slice into yearly windows."""
     rng = np.random.default_rng(seed)
     idx = pd.bdate_range("2021-01-01", "2026-01-01")
     n = len(idx)
@@ -34,34 +34,34 @@ def _bars_5y(seed=0) -> Bars:
 
 
 def test_windows_by_year() -> None:
-    """Погодовая нарезка 2021-2026 даёт корректные годовые окна."""
+    """Yearly slicing of 2021-2026 gives correct yearly windows."""
     bars = _bars_5y()
     wins = walk_forward_windows(bars.index, "year")
     years = [w[0].year for w in wins]
     assert 2021 in years and 2025 in years
     assert len(wins) >= 5
-    print(f"  [ok] нарезка по годам: {len(wins)} окон "
+    print(f"  [ok] yearly slicing: {len(wins)} windows "
           f"({years[0]}..{years[-1]})")
 
 
 def test_distinguishes_stable_vs_mirage() -> None:
-    """КРИТИЧНО: walk-forward различает стабильную и мираж-стратегию.
+    """CRITICAL: walk-forward tells apart a stable and a mirage strategy.
 
-    Строим два искусственных сигнала на одном ряду:
-      - stable: +0.05% каждый бар (ровный доход во всех годах);
-      - mirage: весь доход в одном году (2023), ноль в остальных.
-    У обоих может быть похожий средний, но согласованность окон
-    (positive_frac, разброс) должна их развести.
+    Build two artificial signals on one series:
+      - stable: +0.05% every bar (steady income across all years);
+      - mirage: all income in one year (2023), zero elsewhere.
+    Both may have a similar mean, but window consistency
+    (positive_frac, spread) must separate them.
     """
     bars = _bars_5y()
 
     def stable(b):
-        # Постоянная позиция -> доход follows ряд, но знак стабилен по
-        # годам (лонг на слабо-трендовом ряду).
+        # Constant position -> income follows the series, but the sign
+        # is stable across years (long on a weakly trending series).
         return pd.Series(1.0, index=b.index)
 
     def mirage(b):
-        # В позиции ТОЛЬКО в 2023, иначе кэш.
+        # In the market ONLY in 2023, otherwise cash.
         pos = pd.Series(0.0, index=b.index)
         pos[b.index.year == 2023] = 1.0
         return pos
@@ -71,35 +71,35 @@ def test_distinguishes_stable_vs_mirage() -> None:
     m_stable = consistency_metrics(wf_stable)
     m_mirage = consistency_metrics(wf_mirage)
 
-    # Мираж торгует только 1 год -> положительных окон максимум 1 из 5.
+    # Mirage trades only 1 year -> at most 1 of 5 positive windows.
     assert m_mirage["positive_frac"] <= 0.4, (
-        f"мираж дал {m_mirage['positive_frac']:.0%} прибыльных окон"
+        f"mirage gave {m_mirage['positive_frac']:.0%} profitable windows"
     )
-    # У миража ненулевой результат сконцентрирован -> хотя бы одно окно
-    # заметно, остальные ~0.
+    # Mirage's non-zero result is concentrated -> at least one window is
+    # noticeable, the rest ~0.
     nonzero = (wf_mirage["return"].abs() > 0.001).sum()
-    assert nonzero <= 2, f"мираж торговал в {nonzero} окнах, не в одном"
-    print(f"  [ok] различает: stable {m_stable['positive_frac']:.0%} "
-          f"прибыльных окон vs mirage {m_mirage['positive_frac']:.0%} "
-          f"(мираж торгует {nonzero} окно)")
+    assert nonzero <= 2, f"mirage traded in {nonzero} windows, not one"
+    print(f"  [ok] distinguishes: stable {m_stable['positive_frac']:.0%} "
+          f"profitable windows vs mirage {m_mirage['positive_frac']:.0%} "
+          f"(mirage trades {nonzero} window)")
 
 
 def test_consistency_metrics_shape() -> None:
-    """consistency_metrics возвращает все ожидаемые поля."""
+    """consistency_metrics returns all expected fields."""
     bars = _bars_5y()
     wf = walk_forward_single(bars, lambda b: pd.Series(1.0, index=b.index))
     m = consistency_metrics(wf)
     for key in ("n_windows", "positive_frac", "mean_return",
                 "worst_window", "best_window", "spread"):
-        assert key in m, f"нет метрики {key}"
+        assert key in m, f"missing metric {key}"
     assert m["spread"] >= 0
-    print(f"  [ok] метрики полны: {m['n_windows']} окон, разброс "
+    print(f"  [ok] metrics complete: {m['n_windows']} windows, spread "
           f"{m['spread']:.1%}")
 
 
 if __name__ == "__main__":
-    print("Тесты walk-forward:")
+    print("Walk-forward tests:")
     test_windows_by_year()
     test_distinguishes_stable_vs_mirage()
     test_consistency_metrics_shape()
-    print("Все тесты walk-forward пройдены.")
+    print("All walk-forward tests passed.")

@@ -117,13 +117,58 @@ def tsmom_multi(
         lookbacks: Горизонты momentum в барах.
 
     Returns:
-        position [0, 1]: доля горизонтов в лонге.
+        position [0, 1]: доля горизонтов в лонге. NaN на барах, где
+        нет ни одного валидного горизонта (прогрев / дыры склейки) —
+        движок такие бары пропускает, вместо ложного шорта (0).
     """
-    acc = None
+    # Баг-фикс 10.07.26: раньше (pct_change(lb) > 0).astype(float)
+    # превращал NaN прогрева/дыр в False->0.0, т.е. в ЛОЖНЫЙ «нет
+    # тренда». На стыках склеенных фьючерсов позиция систематически
+    # гасла. Теперь считаем знак только по валидным горизонтам, а
+    # где ВСЕ горизонты NaN — отдаём NaN (движок пропустит).
+    acc = None          # сумма знаков (лонг=1) по валидным горизонтам
+    cnt = None          # число валидных горизонтов на баре
     for lb in lookbacks:
-        sig = (bars.close.pct_change(lb) > 0).astype(float)
-        acc = sig if acc is None else acc + sig
-    return acc / float(len(lookbacks))
+        chg = bars.close.pct_change(lb)
+        sig = (chg > 0).astype(float).where(chg.notna())
+        valid = chg.notna().astype(float)
+        acc = sig.fillna(0.0) if acc is None else acc + sig.fillna(0.0)
+        cnt = valid if cnt is None else cnt + valid
+    # доля лонговых среди валидных; где валидных нет -> NaN
+    return (acc / cnt.where(cnt > 0)).astype(float)
+
+
+# ── Per-asset TSMOM (дедуп 10.07.26) ─────────────────────────────────
+# tr3_tsmom УДАЛЁН как дубликат: он был tsmom_multi с иными дефолтами.
+# Вместо копий кода — один параметризованный движок + именованные
+# наборы горизонтов под класс/таймфрейм. Горизонты подобраны под
+# частоту баров (equity/crypto — эмпирика Кирилла; сырьё — прогнать
+# скриптом scripts/tsmom_horizon_sweep.sh и зафиксировать победителя).
+# ВАЖНО: это НЕ 15 гипотез — движок один, наборы фиксированы заранее
+# под известную частоту, не подбираются после bootstrap (one-shot).
+import functools as _ft
+
+_TSMOM_HORIZONS: dict[str, tuple[int, ...]] = {
+    "tsmom_eq": (63, 126, 252),      # акции 1d (~кв/полугод/год)
+    "tsmom_cr1d": (21, 63, 252),     # крипта 1d (быстрее разворачивается)
+    "tsmom_cr4h": (42, 126, 504),    # крипта 4h (те же ~сроки в H4-барах)
+    "tsmom_comm": (21, 63, 252),     # сырьё 1d (дефолт, уточнить sweep'ом)
+}
+
+
+def _make_tsmom(horizons: tuple[int, ...]):
+    """Фабрика TSMOM-варианта с зафиксированными горизонтами."""
+    fn = _ft.partial(tsmom_multi, lookbacks=horizons)
+    fn.__name__ = f"tsmom_{'_'.join(map(str, horizons))}"
+    fn.__doc__ = (
+        f"TSMOM (Moskowitz-Ooi-Pedersen), горизонты {horizons}. "
+        f"Доля положительных трейлинг-доходностей по горизонтам.")
+    return fn
+
+
+TSMOM_VARIANTS = {
+    name: _make_tsmom(h) for name, h in _TSMOM_HORIZONS.items()
+}
 
 
 def ewmac_forecast(
@@ -207,7 +252,7 @@ def channel_pos(
 
 
 def kama_trend(
-    bars: Bars, er_period: int = 10, fast: int = 2, slow: int = 30,
+    bars: Bars, er_period: int = 14, fast: int = 3, slow: int = 30,
 ) -> pd.Series:
     """Тренд по адаптивной скользящей Кауфмана (KAMA).
 
@@ -227,9 +272,16 @@ def kama_trend(
     """
     close = bars.close.to_numpy(dtype=float)
     n = len(close)
+    # Баг-фикс 10.07.26: prepend=close[0] отравлял diff, если первый
+    # бар NaN (склейка фьючерсов) -> er/sc вечный NaN -> started-флаг
+    # не активировался -> позиция залипала в 0 НАВСЕГДА (тот же класс
+    # вируса, что в удалённом tr3_kama_slope, но через prepend).
+    # Якорь prepend — первый ВАЛИДНЫЙ close.
+    _fv = int(np.argmax(~np.isnan(close))) if (~np.isnan(close)).any() \
+        else 0
     change = np.abs(close - np.roll(close, er_period))
     change[:er_period] = np.nan
-    vol = pd.Series(np.abs(np.diff(close, prepend=close[0])),
+    vol = pd.Series(np.abs(np.diff(close, prepend=close[_fv])),
                     index=bars.index).rolling(er_period).sum().to_numpy()
     er = np.where(vol > 1e-12, change / vol, 0.0)
     sc_fast = 2.0 / (fast + 1.0)
@@ -242,7 +294,10 @@ def kama_trend(
     kama = np.full(n, np.nan)
     started = False
     for i in range(n):
-        if np.isnan(sc[i]):
+        # NaN в sc ИЛИ в close: держим прошлое значение, не стартуем
+        # на NaN-баре (иначе kama[i]=close[i]=NaN отравит рекурсию —
+        # корень вируса залипания при склейке фьючерсов, фикс 10.07.26).
+        if np.isnan(sc[i]) or np.isnan(close[i]):
             if started:
                 kama[i] = kama[i - 1]
             continue

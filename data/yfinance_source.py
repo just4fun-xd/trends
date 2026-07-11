@@ -58,6 +58,23 @@ class YFinanceSource(DataSource):
         # Держим маппинг здесь, ресемпл делаем ниже (до _normalize).
         yf_interval, resample_to = _map_interval(interval)
 
+        # yfinance-интрадей (1h/4h) доступен ТОЛЬКО за ~730 дней. Если
+        # запрошено окно длиннее — данные молча обрежутся до 2 лет, что
+        # ломает сравнимость с 5-летними databento/ccxt. Предупреждаем
+        # (фикс 10.07.26). Для intraday-истории >2 лет: ccxt (крипта)
+        # или databento (сырьё/акции).
+        if yf_interval != "1d":
+            import datetime as _dt
+            try:
+                s = pd.Timestamp(start)
+                if (pd.Timestamp.now(tz=s.tz) - s).days > 725:
+                    print(f"  [yfinance] ВНИМАНИЕ: интрадей {interval} "
+                          f" limited to ~730 days; окно с {start} "
+                          f"обрежется. Для длинной intraday-истории "
+                          f"используй ccxt/databento.")
+            except Exception:  # noqa: BLE001
+                pass
+
         # RETRY (аудит 2026-07b): yfinance троттлит быстрые повторные
         # запросы и возвращает ПУСТО для живых тикеров («possibly
         # delisted» на GC=F). Молчаливый пропуск ломал сравнимость:
@@ -98,18 +115,23 @@ class YFinanceSource(DataSource):
 def _map_interval(interval: str) -> tuple[str, str | None]:
     """Маппит запрошенный интервал на (yf_interval, resample_rule).
 
-    yfinance не поддерживает '4h' напрямую — качаем '1h' и агрегируем
-    до 4H. Остальные поддерживаются нативно.
+    yfinance принимает '1h'/'4h'/'1d', но НЕ 'h1'/'h4' (нотация крипто-
+    раннера). Нормализуем обе формы. '4h' качается как '1h' + ресемпл
+    (yfinance не отдаёт 4h нативно, хоть и указывает в списке).
 
     Args:
-        interval: Запрошенный таймфрейм.
+        interval: Запрошенный таймфрейм ('h1','h4','1h','4h','1d',...).
 
     Returns:
         (интервал для yfinance, правило ресемпла или None).
     """
-    if interval == "4h":
+    # h1/h4 (крипто-нотация) -> 1h/4h (нотация yfinance). Фикс 10.07.26:
+    # раньше 'h1' уходил в yfinance как есть -> 422 "interval=h1 not
+    # supported".
+    norm = {"h1": "1h", "h4": "4h", "d1": "1d"}.get(interval, interval)
+    if norm == "4h":
         return "1h", "4h"
-    return interval, None
+    return norm, None
 
 
 def _resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:

@@ -241,3 +241,30 @@ STRATEGY_CLASSES = {
     "closed": "Закрыта отрицательно — для документации провала",
     "stub": "Заглушка под будущий трек (не реализована)",
 }
+
+
+def instrument_name_map() -> dict[str, str]:
+    """Тикер -> человекочитаемое имя по всем корзинам (для диагностики).
+
+    Нормализует тикеры к голому символу (убирает суффиксы =F, -USDT,
+    -USD), т.к. Databento отдаёт 'NG', а yfinance-корзина хранит 'NG=F'.
+    Так вклад инструментов печатает 'Natural Gas', а не 'NG'.
+
+    Returns:
+        dict голый_тикер -> имя (напр. {'NG': 'Natural Gas',
+        'BTC': 'Bitcoin', 'AAPL': 'Apple'}).
+    """
+    out: dict[str, str] = {}
+
+    def _bare(t: str) -> str:
+        for suf in ("=F", "-USDT", "-USD"):
+            if t.endswith(suf):
+                return t[: -len(suf)]
+        return t
+
+    for basket in (COMMODITY_YF, EQUITY_BASKET, CRYPTO_CCXT, CRYPTO_YF):
+        for name, ticker in basket.items():
+            bare = _bare(ticker)
+            out.setdefault(bare, name)
+            out.setdefault(ticker, name)   # и полный тикер тоже
+    return out

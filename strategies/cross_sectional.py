@@ -187,10 +187,10 @@ def markowitz_momentum(
         NotImplementedError: Трек 1.2 не пройден (и переосмысляется).
     """
     raise NotImplementedError(
-        "markowitz_momentum — заглушка (трек 1.2). Понижен после провала "
-        "Dual Momentum: μ на momentum-ранге не несёт альфы (DUALMOM_"
-        "RESULTS.md). Реализация ждёт переосмысления μ (carry/OU-скор). "
-        "Не выдумываем результат до прохождения трека."
+        "markowitz_momentum is a stub (track 1.2). Downgraded after the "
+        "Dual Momentum failure: mu on a momentum rank carries no alpha "
+        "(DUALMOM_RESULTS.md). Implementation awaits a rethink of mu "
+        "(carry/OU score). We do not fabricate a result before the track."
     )
 
 

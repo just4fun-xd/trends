@@ -149,35 +149,14 @@ def tr3_supertrend(
     return pd.Series(pos, index=bars.index)
 
 
-# ── 5. KAMA-наклон ───────────────────────────────────────────────────
-def tr3_kama_slope(
-    bars: Bars, er_period: int = 10, fast: int = 2, slow: int = 30,
-    slope_win: int = 5,
-) -> pd.Series:
-    """KAMA растёт устойчиво -> лонг (наклон адаптивного сглаживания).
-
-    Механизм: KAMA сама решает, насколько быстро следовать за ценой
-    (efficiency ratio управляет альфой): в пиле почти стоит, в тренде
-    ускоряется. Торгуем ЗНАК её наклона за slope_win — сглаживание,
-    которое почти не движется в боковике, даёт мало ложных наклонов.
-    """
-    change = (bars.close - bars.close.shift(er_period)).abs()
-    vol_sum = bars.close.diff().abs().rolling(er_period).sum()
-    er = (change / vol_sum.where(vol_sum > 1e-12)).fillna(0.0)
-    sc = (er * (2.0 / (fast + 1) - 2.0 / (slow + 1))
-          + 2.0 / (slow + 1)) ** 2
-    c = bars.close.to_numpy()
-    a = sc.to_numpy()
-    kama = np.full(len(c), np.nan)
-    prev = c[0]
-    for i in range(len(c)):
-        if np.isnan(c[i]):
-            kama[i] = prev
-            continue
-        prev = prev + a[i] * (c[i] - prev) if not np.isnan(a[i]) else prev
-        kama[i] = prev
-    ks = pd.Series(kama, index=bars.index)
-    return (ks > ks.shift(slope_win)).astype(float).fillna(0.0)
+# ── 5. KAMA-наклон — УДАЛЕНО 10.07.26 ────────────────────────────────
+# tr3_kama_slope удалён: (1) дубликат ниши kama_trend (lab1), выведен
+# из реестра при дедупе; (2) содержал NaN-вирус инициализации
+# `prev = c[0]` — при NaN в первом баре (склейка фьючерсов) KAMA
+# оставалась NaN до конца ряда. Мёртвый код с багом убран целиком,
+# чтобы его случайно не переиспользовали. Каноничный KAMA-трек —
+# kama_trend в trend_lab.py (цена>KAMA И наклон), инициализация там
+# через first_valid_index, вируса нет.
 
 
 # ── 6. Свинг-структура ───────────────────────────────────────────────
@@ -412,13 +391,25 @@ def tr3_extreme_t(
 
 
 TREND_LAB3 = {
-    "tr3_tsmom": tr3_tsmom,
+    # tr3_tsmom УДАЛЁН 10.07.26 — дубликат tsmom_multi (trend_lab).
+    #   Идентичный алгоритм («доля положительных горизонтов»), разница
+    #   лишь в дефолтных lookbacks. Канон — параметризованный
+    #   tsmom_multi + per-asset регистрация (tsmom_eq/tsmom_cr*/...).
     "tr3_ribbon": tr3_ribbon,
     "tr3_adx_di": tr3_adx_di,
-    "tr3_supertrend": tr3_supertrend,
-    "tr3_kama_slope": tr3_kama_slope,
+    # tr3_supertrend УДАЛЁН 10.07.26 — полный дубликат tr_supertrend
+    #   (trend_lab2). Тот же ATR-трейлинг с перекидкой; отличие только
+    #   ручной TR vs bars.atr() (внутри тот же Wilder-TR).
+    # tr3_kama_slope УДАЛЁН 10.07.26 — пересечение с kama_trend (lab1),
+    #   corr ~высокая (наклон KAMA vs цена>KAMA И наклон). Рейтинг [3],
+    #   слабее kama_trend — закрыт как избыточный.
     "tr3_hh_hl": tr3_hh_hl,
     "tr3_fracdiff": tr3_fracdiff,
+    # tr3_zlema ОСТАВЛЕН, но помечен: идейно одна ниша с tr_zlema
+    #   (lab2) — тот же Zero-Lag EMA Элерса. НЕ 100% дубликат (тут
+    #   цена>одна ZLEMA + наклон; там кросс двух ZLEMA). Оба [2]/[3],
+    #   в ансамбль не идут (corr с трендом высок). Держим как один
+    #   слот ниши ZLEMA до явного дедупа по сигнальной корреляции.
     "tr3_zlema": tr3_zlema,
     "tr3_persist": tr3_persist,
     "tr3_vr_trend": tr3_vr_trend,

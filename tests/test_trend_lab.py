@@ -1,13 +1,14 @@
-"""Тесты лаборатории тренда и vol-percentile гейта.
+"""Tests for the trend lab and the vol-percentile gate.
 
-Инварианты:
-  - все модели TREND_LAB: контракт Bars -> position, индекс совпадает,
-    диапазон [0, 1] (long-only);
-  - tsmom ловит синтетический тренд (позиция в лонге на дрейфе);
-  - chandelier: peak-трейлинг закрывает позицию на глубоком откате;
-  - vol_percentile_gate: 1 в спокойном режиме, 0 при взрыве волы
-    масштаба «за пределами исторического распределения» (ковид-тест);
-  - гейт не выключает стратегию на прогреве (до заполнения окна = 1).
+Invariants:
+  - every TREND_LAB model: Bars -> position contract, index matches,
+    range [0, 1] (long-only);
+  - tsmom catches a synthetic trend (long position on drift);
+  - chandelier: peak-trailing closes the position on a deep pullback;
+  - vol_percentile_gate: 1 in a calm regime, 0 on a vol explosion of a
+    "beyond the historical distribution" scale (covid test);
+  - the gate does not disable the strategy during warm-up (=1 until the
+    window is filled).
 """
 
 from __future__ import annotations
@@ -41,31 +42,36 @@ def test_trend_lab_contract_and_bounds():
     for name, fn in TREND_LAB.items():
         pos = fn(bars)
         assert pos.index.equals(bars.index), name
-        assert (pos >= -1e-9).all(), name
-        assert (pos <= 1.0 + 1e-9).all(), name
-        assert not pos.isna().any(), name
+        # NaN on warm-up/gaps is ALLOWED (the engine shifts and
+        # fillna(0) skips such bars — honester than a false 0; tsmom
+        # fix 10.07.26). Bounds are checked on valid values.
+        valid = pos.dropna()
+        assert (valid >= -1e-9).all(), name
+        assert (valid <= 1.0 + 1e-9).all(), name
+        # but the tail (after warm-up) must not be all NaN
+        assert pos.iloc[300:].notna().any(), f"{name}: tail all NaN"
 
 
 def test_tsmom_long_on_drift():
     bars = _trend_bars(seed=9)
     pos = tsmom(bars)
-    # На устойчивом положительном дрейфе TSMOM почти всегда в лонге
-    # после прогрева 252 бара.
+    # On a steady positive drift TSMOM is almost always long after the
+    # 252-bar warm-up.
     assert pos.iloc[300:].mean() > 0.8
 
 
 def test_chandelier_exits_on_crash():
     n = 600
     idx = pd.date_range("2021-01-04", periods=n, freq="B")
-    # Дрейф 0.8%/бар > синтетического фитиля хая (+0.5%), иначе close
-    # никогда не пробьёт вчерашний rolling-max хаёв.
+    # Drift 0.8%/bar > synthetic high wick (+0.5%), otherwise close
+    # would never break yesterday's rolling-max of highs.
     up = 100.0 * (1.008 ** np.arange(400))
     crash = up[-1] * (0.97 ** np.arange(1, 201))
     close = pd.Series(np.concatenate([up, crash]), index=idx)
     bars = _bars_from_close(close)
     pos = TREND_LAB["chandelier"](bars)
-    assert pos.iloc[350] == 1.0          # в тренде — в позиции
-    assert pos.iloc[-50:].sum() == 0.0   # после обвала — вышел
+    assert pos.iloc[350] == 1.0          # in trend — in position
+    assert pos.iloc[-50:].sum() == 0.0   # after crash — exited
 
 
 def test_vol_gate_blocks_covid_style_explosion():
@@ -73,13 +79,13 @@ def test_vol_gate_blocks_covid_style_explosion():
     idx = pd.date_range("2019-01-02", periods=n, freq="B")
     rng = np.random.default_rng(3)
     rets = 0.0003 + 0.008 * rng.standard_normal(n)
-    # «Ковид»: 40 баров с волой, кратно превышающей всю историю.
+    # "Covid": 40 bars with vol many times the whole history.
     rets[700:740] = 0.10 * rng.standard_normal(40)
     close = pd.Series(100.0 * np.cumprod(1.0 + rets), index=idx)
     bars = _bars_from_close(close)
     gate = vol_percentile_gate(bars)
     assert set(np.unique(gate.values)).issubset({0.0, 1.0})
-    # До взрыва (после прогрева) — открыт, во взрыве — закрыт.
+    # Before the explosion (after warm-up) — open, during it — closed.
     assert gate.iloc[600:695].mean() > 0.9
     assert gate.iloc[715:745].mean() < 0.2
 
@@ -97,16 +103,17 @@ def test_with_vol_gate_wraps_contract():
 
 
 def test_gate_warmup_is_open():
-    bars = _trend_bars(seed=21, n=300)  # короче rank_window
+    bars = _trend_bars(seed=21, n=300)  # shorter than rank_window
     gate = vol_percentile_gate(bars, rank_window=500)
-    # min_periods=250 не достигнут в начале — гейт открыт.
+    # min_periods=250 not reached at the start — gate is open.
     assert gate.iloc[:100].min() == 1.0
 
 
 def test_kama_not_poisoned_by_warmup_nan():
-    """Регрессия: NaN в sc на границе прогрева отравлял рекурсию KAMA
-    навсегда (позиция — вечный 0). После фикса на дрейфующем ряду KAMA
-    должна проводить в лонге заметную долю времени."""
+    """Regression: a NaN in sc at the warm-up boundary used to poison
+    the KAMA recursion forever (position a permanent 0). After the fix,
+    on a drifting series KAMA should spend a noticeable share of time
+    long."""
     bars = _trend_bars(seed=0, n=500)
     pos = TREND_LAB["kama"](bars)
     assert pos.iloc[50:].mean() > 0.2

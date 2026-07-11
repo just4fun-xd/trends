@@ -49,9 +49,8 @@ FAMILIES = {
     # сразу показывал, кто из новичков хотя бы дотягивается до него
     # (это НЕ арбитраж — арбитраж только bootstrap; тут груба сортировка
     # на полной вселенной перед тем, как тратить bootstrap на выживших).
-    "trend3": ["donchian_vt", "tr3_tsmom", "tr3_ribbon", "tr3_adx_di",
-               "tr3_supertrend", "tr3_kama_slope", "tr3_hh_hl",
-               "tr3_fracdiff", "tr3_zlema", "tr3_persist",
+    "trend3": ["donchian_vt", "tsmom_multi", "tr3_ribbon", "tr3_adx_di",
+               "tr3_hh_hl", "tr3_fracdiff", "tr3_zlema", "tr3_persist",
                "tr3_vr_trend", "tr3_mid_ride", "tr3_atr_mom",
                "tr3_vote3", "tr3_range_exp", "tr3_extreme_t"],
     "mr2": ["mr_lowvol", "mr2_kalman_z", "mr2_quantile", "mr2_runs",
@@ -80,8 +79,8 @@ FAMILIES.update({
         "tr_macd_hz", "tr_vhf", "tr_fractal", "tr_ichimoku", "tr_er",
         "tr_zlema", "tr_hull"],
     "cat_trend_lab3": [
-        "donchian_vt", "tr3_tsmom", "tr3_ribbon", "tr3_adx_di",
-        "tr3_supertrend", "tr3_kama_slope", "tr3_hh_hl", "tr3_fracdiff",
+        "donchian_vt", "tsmom_multi", "tr3_ribbon", "tr3_adx_di",
+        "tr3_hh_hl", "tr3_fracdiff",
         "tr3_zlema", "tr3_persist", "tr3_vr_trend", "tr3_mid_ride",
         "tr3_atr_mom", "tr3_vote3", "tr3_range_exp", "tr3_extreme_t"],
     "cat_impulse": [

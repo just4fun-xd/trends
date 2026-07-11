@@ -253,14 +253,17 @@ def main() -> None:
     parser.add_argument("--start", default="2015-01-01")
     parser.add_argument("--end", default="2025-01-01")
     parser.add_argument("--out", default="data/panels")
-    parser.add_argument("--interval", default="1d", choices=["1d", "4h"],
-                        help="Таймфрейм панелей: 1d или 4h (ресемпл 1h)")
+    parser.add_argument("--interval", default="1d",
+                        choices=["1d", "4h", "1h"],
+                        help="Таймфрейм панелей: 1d, 4h (ресемпл 1h) "
+                             "или 1h (часовые как есть, для MR)")
     parser.add_argument("--demo", action="store_true",
                         help="Синтетические панели без API (тест труб)")
     args = parser.parse_args()
 
-    # Для H4 качаем часовые бары и ресемплим в build_panels.
-    schema = "ohlcv-1h" if args.interval == "4h" else "ohlcv-1d"
+    # H4/H1 качаем часовые бары. 4h ресемплится в build_panels, 1h — как
+    # есть (часовая сетка для mean-reversion, гипотеза Кирилла 10.07.26).
+    schema = "ohlcv-1d" if args.interval == "1d" else "ohlcv-1h"
 
     if args.demo:
         print(f"ДЕМО-режим ({args.interval}): синтетика (не для выводов).")

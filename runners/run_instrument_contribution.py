@@ -22,7 +22,7 @@ import argparse
 
 from core.config import (
     COMMODITY_DATABENTO, COMMODITY_YF, CRYPTO_CCXT, CRYPTO_YF,
-    EQUITY_BASKET, filter_basket)
+    EQUITY_BASKET, filter_basket, instrument_name_map)
 from core.sizing import make_sizer
 from data.databento_source import DatabentoSource
 from data.ccxt_source import CCXTSource
@@ -37,6 +37,7 @@ from runners.run_basket import STRATEGIES
 
 BOLD = "\033[1m"
 RESET = "\033[0m"
+YELLOW = "\033[93m"
 RED = "\033[91m"
 
 
@@ -78,10 +79,17 @@ def main() -> None:
     if unknown:
         raise SystemExit(f"нет стратегий в реестре: {unknown}")
 
+    # Путь панели выводится ИЗ ИНТЕРВАЛА, если явно не задан --panel-dir.
+    # 4h -> panels_4h, 1h -> panels_1h, 1d -> panels. Раньше требовалось
+    # дублировать --panel-dir data/panels_4h/futures к --interval 4h;
+    # теперь достаточно --interval (фикс UX 10.07.26). --panel-dir
+    # остаётся как override для нестандартных путей.
     panel_dir = args.panel_dir
     if panel_dir is None:
-        panel_dir = ("data/panels/equities" if args.basket == "equity"
-                     else "data/panels/futures")
+        sleeve = "equities" if args.basket == "equity" else "futures"
+        suffix = {"1d": "panels", "4h": "panels_4h",
+                  "1h": "panels_1h"}.get(args.interval, "panels")
+        panel_dir = f"data/{suffix}/{sleeve}"
     if args.source == "yf":
         source = YFinanceSource()
     elif args.source == "ccxt":
@@ -108,6 +116,14 @@ def main() -> None:
                if args.vt else "")
 
     csv_rows = []
+    # Guard 10.07.26: интервал и путь панели должны совпадать. Теперь
+    # путь авто-выводится из интервала, но если юзер задал --panel-dir
+    # вручную и он противоречит интервалу — предупреждаем.
+    if (args.source == "databento" and args.interval != "1d"
+            and args.interval not in panel_dir):
+        print(f"{YELLOW}  ВНИМАНИЕ: --interval {args.interval}, но путь "
+              f"панели '{panel_dir}' не содержит '{args.interval}'. "
+              f"bars_per_year может быть неверным.{RESET}")
     for strat in args.strategy:
         strategy_fn = STRATEGIES[strat]
         print(f"{BOLD}Вклад инструментов | {strat} | "
@@ -123,7 +139,8 @@ def main() -> None:
         print("\n" + format_contribution(
             df, full_sharpe,
             f"{strat} — вклад по инструментам "
-            f"(сверху вниз: главные кандидаты в балласт)"))
+            f"(сверху вниз: главные кандидаты в балласт)",
+            name_map=instrument_name_map()))
 
         ballast = df[df["verdict"].str.startswith("БАЛЛАСТ")]
         if not ballast.empty:
@@ -143,6 +160,8 @@ def main() -> None:
                     "solo_dd": round(float(row["solo_dd"]), 4),
                     "solo_sharpe": round(
                         float(row["solo_sharpe"]), 4),
+                    "corr_rest": round(float(row["corr_rest"]), 4)
+                    if row["corr_rest"] == row["corr_rest"] else None,
                     "loo_delta": round(float(row["loo_delta"]), 4),
                     "verdict": row["verdict"],
                 })

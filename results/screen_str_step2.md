@@ -490,3 +490,119 @@ donchian_vt +VT(realized) — РОБАСТНА
   Средний / медиана: +5.0% / +4.4%
   Лучшее / худшее:   +12.5% / -1.7%
   Разброс окон:      14.3% (мираж на 1 годе, если велик)
+
+
+  ((.venv) ) shalygin@MacBook-Pro-Kirill-2 trends % python -m runners.run_sleeves \
+    --sleeve donchian_vt:crypto:vt \
+    --sleeve ca_vol_ride:crypto:vt \
+    --source ccxt --crypto-dir "$CRYPTO" --interval 4h --start "$SC" \
+    --target-vol 0.40 --parity
+
+python -m runners.run_sleeves \
+    --sleeve donchian_vt:crypto:vt \
+    --sleeve tr_ichimoku:crypto:vt \
+    --sleeve ca_vol_ride:crypto:vt \
+    --source ccxt --crypto-dir "$CRYPTO" --interval 4h --start "$SC" \
+    --target-vol 0.40 --parity
+Sleeve donchian_vt_crypto_vt (ccxt, 4h) ...
+Sleeve ca_vol_ride_crypto_vt (ccxt, 4h) ...
+
+=== Sleeve'ы по отдельности (gross Sharpe) ===
+  donchian_vt_crypto_vt        ret  +31.6%  DD  -3.7%  Sharpe +1.49
+  ca_vol_ride_crypto_vt        ret  +84.9%  DD  -6.1%  Sharpe +1.79
+
+Корреляция дневных P&L (главное число прогона):
+                       donchian_vt_crypto_vt  ca_vol_ride_crypto_vt
+donchian_vt_crypto_vt                    1.0                    0.5
+ca_vol_ride_crypto_vt                    0.5                    1.0
+
+=== КОМБО (vol-parity (trailing 63, shift 1)) ===
+  Доходность: +49.7%  (годовая: +8.4%)
+  Max DD:     -3.1%
+  Sharpe:     +1.99
+  Годовая вола комбо: 4.1% (доля лимита DD<40%: ~10%)
+  Проходит DD<40%: да
+
+Комбо по годам (gross Sharpe)
+   Год     Return     MaxDD   Sharpe   Бары
+  ------------------------------------------
+  2021     +4.6%    -1.9%    +1.67   2190
+  2022     +1.1%    -1.9%    +0.41   2190
+  2023    +20.5%    -2.1%    +3.10   2190
+  2024    +12.4%    -3.1%    +2.94   2196
+  2025     +4.6%    -2.8%    +1.15   2190
+  2026     +0.0%    +0.0%    +0.00      1
+  ------------------------------------------
+  ИТОГ    +49.7%    -3.1%    +1.54         (компаунд / худший год / ср.Sharpe)
+Sleeve donchian_vt_crypto_vt (ccxt, 4h) ...
+Sleeve tr_ichimoku_crypto_vt (ccxt, 4h) ...
+Sleeve ca_vol_ride_crypto_vt (ccxt, 4h) ...
+
+=== Sleeve'ы по отдельности (gross Sharpe) ===
+  donchian_vt_crypto_vt        ret  +31.6%  DD  -3.7%  Sharpe +1.49
+  tr_ichimoku_crypto_vt        ret +275.2%  DD -22.5%  Sharpe +1.11
+  ca_vol_ride_crypto_vt        ret  +84.9%  DD  -6.1%  Sharpe +1.79
+
+Корреляция дневных P&L (главное число прогона):
+                       donchian_vt_crypto_vt  tr_ichimoku_crypto_vt  ca_vol_ride_crypto_vt
+donchian_vt_crypto_vt                   1.00                   0.47                   0.50
+tr_ichimoku_crypto_vt                   0.47                   1.00                   0.29
+ca_vol_ride_crypto_vt                   0.50                   0.29                   1.00
+
+=== КОМБО (vol-parity (trailing 63, shift 1)) ===
+  Доходность: +64.5%  (годовая: +10.5%)
+  Max DD:     -3.6%
+  Sharpe:     +2.05
+  Годовая вола комбо: 4.9% (доля лимита DD<40%: ~12%)
+  Проходит DD<40%: да
+
+Комбо по годам (gross Sharpe)
+   Год     Return     MaxDD   Sharpe   Бары
+  ------------------------------------------
+  2021     +6.9%    -2.2%    +1.87   2190
+  2022     +2.5%    -2.3%    +0.78   2190
+  2023    +21.8%    -2.7%    +2.78   2190
+  2024    +15.4%    -3.4%    +2.90   2196
+  2025     +6.9%    -3.6%    +1.46   2190
+  2026     +0.0%    +0.0%    +0.00      1
+  ------------------------------------------
+  ИТОГ    +64.5%    -3.6%    +1.63         (компаунд / худший год / ср.Sharpe)
+((.venv) ) shalygin@MacBook-Pro-Kirill-2 trends % python -m runners.run_sleeves \
+    --sleeve donchian_vt:commodity:vt@DONCH_CORE_COMM \
+    --sleeve mr_lowvol:commodity:vt@MRLV_CORE_COMM \
+    --sleeve tr3_hh_hl:commodity:vt@HHHL_CORE_COMM \
+    --source databento --panel-dir "$PANEL" --start "$S" \
+    --target-vol 0.60 --hrp
+Sleeve donchian_vt_commodity_vt [6 инстр] (databento, 1d) ...
+Sleeve mr_lowvol_commodity_vt [6 инстр] (databento, 1d) ...
+Sleeve tr3_hh_hl_commodity_vt [6 инстр] (databento, 1d) ...
+
+=== Sleeve'ы по отдельности (gross Sharpe) ===
+  donchian_vt_commodity_vt     ret +144.5%  DD -13.1%  Sharpe +1.32
+  mr_lowvol_commodity_vt       ret +120.6%  DD  -6.3%  Sharpe +1.73
+  tr3_hh_hl_commodity_vt       ret +283.0%  DD -15.1%  Sharpe +1.26
+
+Корреляция дневных P&L (главное число прогона):
+                          donchian_vt_commodity_vt  mr_lowvol_commodity_vt  tr3_hh_hl_commodity_vt
+donchian_vt_commodity_vt                      1.00                    0.04                    0.59
+mr_lowvol_commodity_vt                        0.04                    1.00                    0.08
+tr3_hh_hl_commodity_vt                        0.59                    0.08                    1.00
+
+=== КОМБО (HRP (де Прадо): donchian_vt_commodity_vt=21%, mr_lowvol_commodity_vt=71%, tr3_hh_hl_commodity_vt=8%) ===
+  Доходность: +138.6%  (годовая: +12.5%)
+  Max DD:     -5.0%
+  Sharpe:     +2.18
+  Годовая вола комбо: 5.5% (доля лимита DD<40%: ~14%)
+  Проходит DD<40%: да
+
+Комбо по годам (gross Sharpe)
+   Год     Return     MaxDD   Sharpe   Бары
+  ------------------------------------------
+  2020    +18.8%    -2.3%    +3.03    311
+  2021    +18.2%    -1.6%    +2.79    310
+  2022    +20.4%    -4.7%    +2.68    310
+  2023    +16.5%    -5.0%    +1.81    309
+  2024     +8.6%    -2.3%    +1.47    313
+  2025    +11.5%    -4.2%    +1.60    312
+  ------------------------------------------
+  ИТОГ   +138.6%    -5.0%    +2.23         (компаунд / худший год / ср.Sharpe)

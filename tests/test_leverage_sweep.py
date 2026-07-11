@@ -1,15 +1,15 @@
-"""Тесты leverage_sweep: находит максимум доходности в рамках DD<40%.
+"""leverage_sweep tests: finds the max return within DD<40%.
 
-Инварианты:
-  - монотонность: на тихом (низковолатильном) синтетическом ряду
-    больший кэп плеча должен давать больший доход, пока не упрёмся
-    в DD<40% — иначе sweep не делает то, что заявлено;
-  - best_leverage возвращает точку из passing-подмножества;
-  - lev_hit_cap корректно детектирует «упёрлись в потолок»: если
-    target_vol недостижим при данном кэпе, доля дней у потолка
-    должна быть высокой;
-  - при пустом passing (все точки превышают DD) best_leverage — None,
-    а не падает с ошибкой.
+Invariants:
+  - monotonicity: on a quiet (low-vol) synthetic series a larger
+    leverage cap should give more return until DD<40% binds —
+    otherwise the sweep does not do what it claims;
+  - best_leverage returns a point from the passing subset;
+  - lev_hit_cap correctly detects "hit the cap": if target_vol is
+    unreachable at the given cap, the fraction of days at the cap
+    must be high;
+  - with an empty passing set (all points exceed DD) best_leverage is
+    None, not an error.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from diagnostics.port_lev_sweep import best_leverage, leverage_sweep
 
 def _quiet_combo(n: int = 1500, seed: int = 5,
                  daily_vol: float = 0.001) -> pd.Series:
-    """Синтетика с низкой волой — имитация комбо после vol-parity
-    (реальные комбо в проекте: годовая вола 1.6-2.9%)."""
+    """Low-vol synthetic — a combo after vol-parity
+    (real project combos: annual vol 1.6-2.9%)."""
     rng = np.random.default_rng(seed)
     mu = 1.2 * daily_vol  # Sharpe ~1.2
     rets = mu + daily_vol * rng.standard_normal(n)
@@ -39,8 +39,8 @@ def test_higher_cap_increases_return_until_dd_breaks():
     )
     low = df.loc[(0.30, 2.0)]
     high = df.loc[(0.30, 8.0)]
-    # На тихом ряду больший кэп -> больше реализованное плечо ->
-    # больше доходность (Sharpe > 0 закладывался в конструкции ряда).
+    # On a quiet series a larger cap -> more realized leverage ->
+    # more return (Sharpe > 0 was built into the series).
     assert high["avg_lev"] >= low["avg_lev"]
     assert high["return"] >= low["return"]
 
@@ -59,8 +59,8 @@ def test_best_leverage_picks_max_return_among_passing():
 
 
 def test_lev_hit_cap_detects_unreachable_target():
-    # Очень высокий target_vol с низким кэпом -> кэп должен связывать
-    # почти всегда (после прогрева окна).
+    # A very high target_vol with a low cap -> the cap should bind
+    # almost always (after the window warms up).
     combo = _quiet_combo(seed=17, daily_vol=0.0008)
     df = leverage_sweep(
         combo, target_vols=(0.90,), max_leverage_grid=(2.0,),
@@ -71,8 +71,8 @@ def test_lev_hit_cap_detects_unreachable_target():
 
 
 def test_best_leverage_none_when_all_fail_dd():
-    # Экстремальный кэп на волатильном ряду -> DD почти наверняка
-    # пробивает 40%; best_leverage не должен падать, а вернуть None.
+    # An extreme cap on a volatile series -> DD almost surely breaks
+    # 40%; best_leverage must not crash but return None.
     rng = np.random.default_rng(23)
     n = 800
     rets = pd.Series(
@@ -99,9 +99,9 @@ def test_sweep_grid_shape_and_columns():
 
 
 def test_leverage_sweep_funding_rate_lowers_return():
-    """funding_rate>0 в сетке должен снижать return относительно
-    funding_rate=0 везде, где реально используется заём (avg_lev>1),
-    и не менять avg_lev/lev_hit_cap (funding не влияет на веса)."""
+    """funding_rate>0 in the grid should lower return relative to
+    funding_rate=0 wherever borrowing is actually used (avg_lev>1),
+    and not change avg_lev/lev_hit_cap (funding does not affect weights)."""
     combo = _quiet_combo(seed=29)
     free = leverage_sweep(
         combo, target_vols=(0.30,), max_leverage_grid=(6.0,),

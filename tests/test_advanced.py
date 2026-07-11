@@ -1,15 +1,15 @@
-"""Тесты продвинутого аппарата: bootstrap, FDM, Hurst, volume.
+"""Advanced apparatus tests: bootstrap, FDM, Hurst, volume.
 
-Инварианты:
-  bootstrap: CI содержит точечный Sharpe; paired-разность на
-    идентичных рядах = ровно 0 (значимости нет); на явно разных по
-    построению рядах — significant=True;
-  carver_fdm: контракт/границы, long-only, на дрейфе в позиции;
-  hurst_aggvar: H(случайное блуждание) ~ 0.5, H(трендовый AR) > H(RW),
-    H(антиперсистентный) < H(RW) — ранговая проверка, не точная;
-  hurst_combo: границы, прогрев 50/50;
-  donch_vol_confirm: без volume нейтрален (== donchian_breakout);
-    с volume блокирует пробои на тонком объёме.
+Invariants:
+  bootstrap: the CI contains the point Sharpe; the paired difference
+    on identical series = exactly 0 (not significant); on series clearly
+    different by construction — significant=True;
+  carver_fdm: contract/bounds, long-only, in position on a drift;
+  hurst_aggvar: H(random walk) ~ 0.5, H(trending AR) > H(RW),
+    H(anti-persistent) < H(RW) — a rank check, not exact;
+  hurst_combo: bounds, 50/50 warm-up;
+  donch_vol_confirm: neutral without volume (== donchian_breakout);
+    with volume it blocks breakouts on thin volume.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def test_carver_fdm_contract_and_drift():
     pos = carver_fdm(bars)
     assert pos.index.equals(bars.index)
     assert (pos >= -1e-9).all() and (pos <= 1.0 + 1e-9).all()
-    assert pos.iloc[400:].mean() > 0.1  # на дрейфе в позиции
+    assert pos.iloc[400:].mean() > 0.1  # in position on a drift
 
 
 def test_hurst_ranks_regimes():
@@ -95,15 +95,15 @@ def test_hurst_ranks_regimes():
             r[i] = phi * r[i - 1] + eps[i]
         return pd.Series(1000.0 + np.cumsum(r), index=idx)
 
-    # AR(1) — короткопамятный: асимптотически H -> 0.5, поэтому
-    # различие видно на КОРОТКИХ масштабах (наш торговый горизонт) и
-    # при сильной phi; сравниваем среднее H по окнам (одна последняя
-    # точка шумная). Эмпирика: trend 0.61-0.71 > rw ~0.46 > anti ~0.37.
+    # AR(1) is short-memory: asymptotically H -> 0.5, so the difference
+    # shows on SHORT scales (our trading horizon) and with strong phi;
+    # we compare the mean H over windows (a single last point is noisy).
+    # Empirically: trend 0.61-0.71 > rw ~0.46 > anti ~0.37.
     h_tr = hurst_aggvar(ar(0.6)).dropna().mean()
     h_rw = hurst_aggvar(rw).dropna().mean()
     h_an = hurst_aggvar(ar(-0.6)).dropna().mean()
     assert h_tr > h_rw > h_an
-    assert 0.35 < h_rw < 0.65  # RW около 0.5
+    assert 0.35 < h_rw < 0.65  # RW around 0.5
 
 
 def test_hurst_combo_bounds_and_warmup():
@@ -124,7 +124,7 @@ def test_donch_vol_confirm_neutral_without_volume():
 def test_donch_vol_confirm_blocks_thin_volume():
     n = 800
     rng = np.random.default_rng(23)
-    # Постоянный тонкий объём: z никогда не превысит порог.
+    # Constant thin volume: z never crosses the threshold.
     vol = pd.Series(1000.0 + rng.normal(0, 1, n),
                     index=pd.date_range("2019-01-02", periods=n,
                                         freq="B"))
@@ -132,5 +132,5 @@ def test_donch_vol_confirm_blocks_thin_volume():
     gated = donch_vol_confirm(bars, z_min=3.0)
     from strategies.donchian import donchian_breakout
     free = donchian_breakout(bars, entry=20, exit_period=10)
-    # На тонком объёме входов должно быть строго меньше.
+    # On thin volume there must be strictly fewer entries.
     assert gated.sum() < free.sum()

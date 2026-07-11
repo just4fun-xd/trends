@@ -111,10 +111,19 @@ def instrument_contribution(
         loo = rest.mean(axis=1, skipna=True).fillna(0.0)
         loo_sharpe = _sharpe(loo, bpy)
         delta = loo_sharpe - full_sharpe  # >0: без него лучше
+        # корреляция инструмента с ОСТАЛЬНОЙ корзиной — ключ к чтению
+        # LOO: низкий solo + низкая corr = держатель через диверсиф.
+        corr = float(solo.corr(loo)) if solo.std() > 0 else float("nan")
+        # Зона шума: |LOO| < 0.03 статистически неотличима от нуля на
+        # 5-летнем окне. Порядок инструментов внутри неё НЕ значим —
+        # не ранжировать (critique Кирилла 10.07: Corn vs NG, CL vs
+        # Copper болтались в шуме, а подавались как рейтинг).
         if delta > 0.05:
             verdict = "БАЛЛАСТ (без него лучше)"
         elif delta < -0.05:
             verdict = "держать (поддерживает)"
+        elif abs(delta) < 0.03:
+            verdict = "шум (|LOO|<0.03, не ранжировать)"
         else:
             verdict = "нейтрален"
         rows.append({
@@ -122,6 +131,7 @@ def instrument_contribution(
             "solo_ret": float((1.0 + solo).prod() - 1.0),
             "solo_dd": _max_dd(solo),
             "solo_sharpe": _sharpe(solo, bpy),
+            "corr_rest": corr,
             "loo_delta": float(delta),
             "verdict": verdict,
         })
@@ -131,20 +141,38 @@ def instrument_contribution(
 
 def format_contribution(
     df: pd.DataFrame, full_sharpe: float, title: str = "",
+    name_map: dict[str, str] | None = None,
 ) -> str:
-    """Человекочитаемая таблица вклада инструментов."""
+    """Человекочитаемая таблица вклада инструментов.
+
+    Args:
+        df: результат instrument_contribution.
+        full_sharpe: Sharpe полного портфеля.
+        title: заголовок блока.
+        name_map: тикер -> полное имя (напр. NG -> Natural Gas).
+            Если None — печатаются тикеры как есть.
+    """
+    nm = name_map or {}
     lines = []
     if title:
         lines.append(title)
     lines.append(f"  Полный портфель Sharpe (gross): {full_sharpe:+.2f}")
-    lines.append("  " + "-" * 68)
-    lines.append(f"  {'инструмент':12s} {'solo_ret':>9s} "
-                 f"{'solo_DD':>8s} {'solo_Sh':>8s} {'LOO_Δ':>8s}  вердикт")
-    lines.append("  " + "-" * 68)
+    lines.append("  " + "-" * 92)
+    lines.append(f"  {'инструмент':18s} {'solo_ret':>9s} "
+                 f"{'solo_DD':>8s} {'solo_Sh':>8s} {'corr':>6s} "
+                 f"{'LOO_Δ':>8s}  вердикт")
+    lines.append("  " + "-" * 92)
     for name, r in df.iterrows():
+        label = nm.get(name, name)[:18]
+        corr = r.get("corr_rest", float("nan"))
+        corr_s = f"{corr:+.2f}" if corr == corr else "  — "
         lines.append(
-            f"  {name:12s} {r['solo_ret']:+8.1%} "
+            f"  {label:18s} {r['solo_ret']:+8.1%} "
             f"{r['solo_dd']:+7.1%} {r['solo_sharpe']:+7.2f} "
-            f"{r['loo_delta']:+7.2f}  {r['verdict']}"
+            f"{corr_s:>6s} {r['loo_delta']:+7.2f}  {r['verdict']}"
         )
+    lines.append("  " + "-" * 92)
+    lines.append("  corr = корреляция с остальной корзиной "
+                 "(низкая = диверсификатор). LOO_Δ в зоне |<0.03| "
+                 "— шум, не рейтинг.")
     return "\n".join(lines)

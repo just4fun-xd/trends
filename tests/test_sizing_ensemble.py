@@ -1,14 +1,14 @@
-"""Тесты сайзеров (realized/garch), ансамблей и портфельного sweep.
+"""Sizer (realized/garch), ensemble and portfolio-sweep tests.
 
-Проверяемые инварианты (синтетика, без сети):
-  - make_sizer: реестр, границы [0, max_leverage], NaN-прогрев
-    держит применённое значение;
-  - mr_ensemble: позиция в [0, 1], индекс совпадает с bars;
-  - trend_mr_combo: позиция в [0, 1], валидация весов;
-  - vol_sweep_basket: портфельные колонки присутствуют, портфельный DD
-    не хуже (не глубже) worst-case per-instrument (диверсификация не
-    может ухудшить equal-weight DD относительно худшего инструмента);
-  - оборот sweep'а — drift-aware (совпадает с формулой движка).
+Invariants checked (synthetic, no network):
+  - make_sizer: registry, bounds [0, max_leverage], NaN warm-up
+    holds the applied value;
+  - mr_ensemble: position in [0, 1], index matches bars;
+  - trend_mr_combo: position in [0, 1], weight validation;
+  - vol_sweep_basket: portfolio columns present, the portfolio DD is
+    no worse (not deeper) than the worst-case per-instrument
+    (diversification cannot worsen equal-weight DD vs the worst one);
+  - the sweep turnover is drift-aware (matches the engine formula).
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ from strategies.ensemble import mr_ensemble, trend_mr_combo
 
 def _make_bars(n: int = 900, seed: int = 7, drift: float = 0.0002,
                symbol: str = "SYN") -> Bars:
-    """Синтетический инструмент с кластеризованной волой (для GARCH)."""
+    """Synthetic instrument with clustered vol (for GARCH)."""
     rng = np.random.default_rng(seed)
-    # Простая vol-кластеризация: двурежимная сигма.
+    # Simple vol clustering: two-regime sigma.
     regime = (np.sin(np.arange(n) / 60.0) > 0).astype(float)
     sigma = 0.008 + 0.012 * regime
     rets = drift + sigma * rng.standard_normal(n)
@@ -50,7 +50,7 @@ def test_make_sizer_registry_and_bounds():
         assert mult.index.equals(bars.index)
         assert (mult >= 0).all()
         assert (mult <= 2.0 + 1e-12).all()
-        # После прогрева сайзер должен быть активен.
+        # After warm-up the sizer must be active.
         assert float(mult.iloc[-100:].mean()) > 0
     with pytest.raises(KeyError):
         make_sizer("hmm")
@@ -62,7 +62,7 @@ def test_mr_ensemble_bounds_and_index():
     assert pos.index.equals(bars.index)
     assert (pos >= -1e-12).all()
     assert (pos <= 1.0 + 1e-12).all()
-    # Дробность: ансамбль из 4 бинарных ног даёт значения кратные 0.25.
+    # Granularity: an ensemble of 4 binary legs gives multiples of 0.25.
     vals = np.unique(np.round(pos.values, 6))
     assert set(vals).issubset({0.0, 0.25, 0.5, 0.75, 1.0})
 
@@ -81,7 +81,7 @@ def test_vol_sweep_portfolio_columns_and_dd_dominance():
     baskets = {f"S{i}": _make_bars(seed=100 + i) for i in range(4)}
 
     def sig(bars):
-        # Простой всегда-в-лонге сигнал: изолирует эффект сайзера.
+        # A simple always-long signal: isolates the sizer effect.
         return pd.Series(1.0, index=bars.index)
 
     df = vol_sweep_basket(baskets, sig, target_vols=(0.15, 0.30),
@@ -89,7 +89,7 @@ def test_vol_sweep_portfolio_columns_and_dd_dominance():
     for col in ("port_return", "port_dd", "port_sharpe",
                 "port_passes_dd", "worst_dd"):
         assert col in df.columns
-    # Диверсификация: DD equal-weight портфеля не глубже worst-case.
+    # Diversification: equal-weight portfolio DD no deeper than worst-case.
     assert (df["port_dd"] >= df["worst_dd"] - 1e-12).all()
 
 
@@ -101,7 +101,7 @@ def test_sweep_turnover_matches_engine_formula():
 
     df, _ = vol_sweep_single(bars, sig, target_vols=(0.20,),
                              cost=0.0002)
-    # Пересобираем оборот вручную той же формулой движка.
+    # Rebuild turnover by hand with the same engine formula.
     sizer = make_sizer("realized", target_vol=0.20, max_leverage=6.0)
     pos = sig(bars) * sizer(bars)
     prev = pos.shift(1).fillna(0.0)
@@ -112,8 +112,8 @@ def test_sweep_turnover_matches_engine_formula():
 
 
 def test_garch_sizer_reacts_to_vol_regimes():
-    """GARCH-сайзер должен давать меньший размер в высоковолатильном
-    режиме, чем в низковолатильном (иначе он не сайзер)."""
+    """The GARCH sizer must give a smaller size in a high-vol regime
+    than in a low-vol one (otherwise it is not a sizer)."""
     bars = _make_bars(seed=33, n=1200)
     mult = make_sizer("garch", target_vol=0.20)(bars)
     rv = bars.returns().rolling(30).std()
@@ -129,7 +129,7 @@ def test_trend_ensemble_bounds_and_registry():
     pos = trend_ensemble(bars)
     assert pos.index.equals(bars.index)
     assert (pos >= -1e-9).all() and (pos <= 1.0 + 1e-9).all()
-    # На дрейфе ансамбль должен быть в лонге заметную долю времени.
+    # On a drift the ensemble should be long a noticeable share of time.
     assert pos.iloc[300:].mean() > 0.3
     assert "trend_ens" in STRATEGIES
 
@@ -137,7 +137,7 @@ def test_trend_ensemble_bounds_and_registry():
 def test_portfolio_vol_target_scales_and_no_lookahead():
     from core.sizing import portfolio_vol_target
     rng = np.random.default_rng(9)
-    # Тихий портфельный ряд ~3% годовой волы (как комбо после parity).
+    # Quiet portfolio series ~3% annual vol (like a combo after parity).
     rets = pd.Series(
         0.0002 + 0.002 * rng.standard_normal(1500),
         index=pd.date_range("2019-01-02", periods=1500, freq="B"),
@@ -146,12 +146,12 @@ def test_portfolio_vol_target_scales_and_no_lookahead():
                                        max_leverage=4.0)
     raw_vol = rets.std() * np.sqrt(252)
     new_vol = scaled.iloc[100:].std() * np.sqrt(252)
-    assert new_vol > raw_vol * 2          # вола реально поднята
-    assert abs(new_vol - 0.10) < 0.03     # и близка к цели
-    assert (lev <= 4.0 + 1e-9).all()      # кэп плеча
-    # Нет look-ahead: плечо бара t не зависит от rets[t]. Спайк
-    # абсолютный (0.05 >> сигма), чтобы вола окна гарантированно
-    # прыгнула и плечо слетело с кэпа на СЛЕДУЮЩЕМ баре.
+    assert new_vol > raw_vol * 2          # vol actually raised
+    assert abs(new_vol - 0.10) < 0.03     # and close to target
+    assert (lev <= 4.0 + 1e-9).all()      # leverage cap
+    # No look-ahead: leverage at bar t does not depend on rets[t]. The
+    # spike is absolute (0.05 >> sigma) so the window vol surely jumps
+    # and leverage drops off the cap on the NEXT bar.
     rets2 = rets.copy()
     rets2.iloc[500] = 0.05
     _, lev2 = portfolio_vol_target(rets2, target_vol=0.10)
@@ -160,8 +160,8 @@ def test_portfolio_vol_target_scales_and_no_lookahead():
 
 
 def test_funding_rate_reduces_leveraged_return():
-    """Стоимость фондирования снижает доходность плечевого портфеля,
-    но не влияет на веса плеча (та же реализация вол-таргетинга)."""
+    """Funding cost lowers the leveraged portfolio return but does not
+    affect the leverage weights (same vol-targeting implementation)."""
     from core.sizing import portfolio_vol_target
     rng = np.random.default_rng(2)
     n = 1000
@@ -173,20 +173,20 @@ def test_funding_rate_reduces_leveraged_return():
         rets, target_vol=0.25, max_leverage=6.0, funding_rate=0.0)
     paid, lev_paid = portfolio_vol_target(
         rets, target_vol=0.25, max_leverage=6.0, funding_rate=0.06)
-    # Плечо (веса позиции) не меняется от funding_rate.
+    # Leverage (position weights) does not change with funding_rate.
     pd.testing.assert_series_equal(lev_free, lev_paid)
-    # Доходность после funding строго ниже (при активном плече).
+    # Return after funding is strictly lower (when leverage is active).
     active = lev_free > 1.0 + 1e-9
     assert (paid[active] < free[active]).mean() > 0.95
 
 
 def test_funding_only_charges_borrowed_portion():
-    """При leverage<=1 (нет займа) funding_rate не должен ничего
-    вычитать — платим только за (leverage-1), не за весь размер."""
+    """With leverage<=1 (no borrowing) funding_rate must subtract
+    nothing — we pay only for (leverage-1), not the whole size."""
     from core.sizing import portfolio_vol_target
     rng = np.random.default_rng(6)
     n = 500
-    # Очень высокая вола -> target_vol легко достижим при leverage<1.
+    # Very high vol -> target_vol is easily reached with leverage<1.
     rets = pd.Series(
         0.0 + 0.05 * rng.standard_normal(n),
         index=pd.date_range("2019-01-02", periods=n, freq="B"),
@@ -196,15 +196,15 @@ def test_funding_only_charges_borrowed_portion():
     paid, lev2 = portfolio_vol_target(
         rets, target_vol=0.05, max_leverage=6.0, funding_rate=0.06)
     no_borrow = lev <= 1.0 + 1e-9
-    # Там, где плечо <=1 (нет займа), funding не должен менять доход.
+    # Where leverage <=1 (no borrowing) funding must not change return.
     if no_borrow.any():
         assert np.allclose(
             free[no_borrow].values, paid[no_borrow].values, atol=1e-12)
 
 
 def test_breakeven_funding_rate_bounds_and_monotonicity():
-    """breakeven возвращает ставку, разделяющую прибыль/убыток:
-    чуть ниже неё чистая доходность > 0, чуть выше < 0."""
+    """breakeven returns the rate separating profit/loss: just below it
+    net return > 0, just above < 0."""
     from core.sizing import breakeven_funding_rate, portfolio_vol_target
     rng = np.random.default_rng(41)
     n = 1200
@@ -227,7 +227,7 @@ def test_breakeven_funding_rate_bounds_and_monotonicity():
 def test_breakeven_zero_when_already_unprofitable():
     from core.sizing import breakeven_funding_rate
     n = 500
-    # Чисто убыточный ряд без funding -> breakeven = 0.
+    # A purely losing series with no funding -> breakeven = 0.
     rets = pd.Series(
         -0.001, index=pd.date_range("2019-01-02", periods=n, freq="B"))
     be = breakeven_funding_rate(rets, target_vol=0.20, max_leverage=4.0)
@@ -238,7 +238,7 @@ def test_breakeven_returns_hi_when_always_profitable():
     from core.sizing import breakeven_funding_rate
     rng = np.random.default_rng(50)
     n = 1200
-    # Очень высокий Sharpe -> прибыльна даже при funding=hi.
+    # Very high Sharpe -> profitable even at funding=hi.
     rets = pd.Series(
         0.003 + 0.003 * rng.standard_normal(n),
         index=pd.date_range("2019-01-02", periods=n, freq="B"),
@@ -249,15 +249,15 @@ def test_breakeven_returns_hi_when_always_profitable():
 
 
 def test_member_contribution_loo_and_corr():
-    """LOO-диагностика: балласт (нулевой член) детектируется, вредный
-    член (антисигнал) даёт отрицательную delta, корреляционная
-    матрица содержит колонку ENSEMBLE."""
+    """LOO diagnostic: ballast (a zero member) is detected, a harmful
+    member (anti-signal) gives a negative delta, the correlation matrix
+    contains an ENSEMBLE column."""
     from diagnostics.member_contribution import member_contribution
 
-    # Сильный дрейф + фикс. сиды: always-long ловит дрейф целиком
-    # (детерминированно помогает), always-short — против дрейфа
-    # (детерминированно вредит). Momentum-члены тут непригодны:
-    # синтетика iid, у momentum нет edge, вклад ложится монеткой.
+    # Strong drift + fixed seeds: always-long catches the whole drift
+    # (deterministically helps), always-short goes against it
+    # (deterministically hurts). Momentum members are unusable here:
+    # iid synthetic, momentum has no edge, its contribution is a coin flip.
     baskets = {f"S{i}": _make_bars(seed=200 + i, drift=0.0015)
                for i in range(3)}
 
@@ -276,11 +276,11 @@ def test_member_contribution_loo_and_corr():
     assert set(res["solo"].index) == set(members)
     assert set(res["loo"].index) == set(members)
     assert "ENSEMBLE" in res["corr"].columns
-    # Нулевой член: соло-Sharpe ровно 0.
+    # Zero member: solo Sharpe exactly 0.
     assert res["solo"].loc["zero", "sharpe"] == 0.0
-    # Антисигнал на дрейфе должен вредить ансамблю: без него лучше.
+    # An anti-signal on a drift must hurt the ensemble: better without it.
     assert res["loo"].loc["bad", "delta"] < 0
-    # Хороший член должен помогать: без него хуже.
+    # A good member must help: worse without it.
     assert res["loo"].loc["good", "delta"] > 0
 
 
@@ -291,7 +291,7 @@ def test_mr_kelt_confirm_registered_and_bounded():
     pos = mr_keltner_confirm(bars)
     assert pos.index.equals(bars.index)
     assert (pos >= -1e-9).all() and (pos <= 1.0 + 1e-9).all()
-    # Пара из двух бинарных членов -> значения кратны 0.5.
+    # A pair of two binary members -> values are multiples of 0.5.
     vals = set(np.unique(np.round(pos.values, 6)))
     assert vals.issubset({0.0, 0.5, 1.0})
     assert "mr_kelt_confirm" in STRATEGIES

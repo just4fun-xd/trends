@@ -52,15 +52,26 @@ import pandas as pd
 
 from scripts import panels_common as pc
 
-DATASET = "EQUS.SUMMARY"
+DATASET = "EQUS.SUMMARY"          # дневки (EOD), история с 2024-07
+# Intraday-акции: XNAS.ITCH — единственный пригодный (история с
+# 2018-05, все US-тикеры, ohlcv-1h/1m ~$0). DBEQ.BASIC/EQUS.MINI
+# отсеяны: история только с 2023-03 (проверено get_cost 10.07.26).
+DATASET_INTRADAY = "XNAS.ITCH"
 
 # Дефолтная корзина ~ твой валидированный equity-юниверс (крупный кап).
 # Правь под фактический список в core/universe.
-DEFAULT_SYMBOLS = [
-    "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "AMZN", "GOOGL", "META",
-    "JPM", "V", "UNH", "XOM", "JNJ", "PG", "HD", "MA", "CVX", "KO",
-    "PEP", "COST",
-]
+# Дефолтная корзина = боевой EQUITY_BASKET из config (единый источник
+# правды). Хардкод расходился (UNH/XOM/CVX vs WMT/MRK), панель не
+# совпадала с корзиной раннера -> «нет в panel_open». Фикс 10.07.26.
+try:
+    from core.config import EQUITY_BASKET as _EQB
+    DEFAULT_SYMBOLS = list(_EQB.values())
+except Exception:                                        # noqa: BLE001
+    DEFAULT_SYMBOLS = [
+        "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "AMZN", "GOOGL", "META",
+        "JPM", "V", "WMT", "JNJ", "PG", "HD", "MA", "MRK", "KO",
+        "PEP", "COST",
+    ]
 
 
 def check_range(symbols: list[str]) -> None:
@@ -110,7 +121,7 @@ def _client():
 
 def fetch_via_api(
     symbols: list[str], start: str, end: str, schema: str = "ohlcv-1d",
-    adjust: bool = False,
+    adjust: bool = False, dataset: str = DATASET,
 ) -> dict[str, pd.DataFrame]:
     """Тянет OHLCV акций из EQUS.SUMMARY с маппингом тикеров.
 
@@ -136,7 +147,7 @@ def fetch_via_api(
     """
     client = _client()
     data = client.timeseries.get_range(
-        dataset=DATASET,
+        dataset=dataset,
         schema=schema,
         symbols=symbols,          # список тикеров
         stype_in="raw_symbol",    # входная symbology — тикер
@@ -219,18 +230,43 @@ def main() -> None:
         check_range(args.symbols)
         return
 
-    schema = "ohlcv-1h" if args.interval == "4h" else "ohlcv-1d"
+    # Интервал -> (dataset, schema). 1d берёт EOD-датасет (дёшево,
+    # но история с 2024-07!); 4h/1h -> XNAS.ITCH (intraday, с 2018).
+    if args.interval == "1d":
+        dataset, schema = DATASET, "ohlcv-1d"
+    else:
+        dataset = DATASET_INTRADAY
+        schema = "ohlcv-1h"      # 4h ресемплится из 1h в build_panels
+    if args.interval == "1h":
+        # 1h — часовые как есть (build_panels не ресемплит на '1h').
+        pass
+
+    # Авто-клэмп start к доступному началу датасета. XNAS.ITCH с
+    # 2018-05, EQUS.SUMMARY с 2024-07 — дефолтный --start 2015-01-01
+    # даёт 422 data_start_before_available_start. Поджимаем и
+    # предупреждаем, вместо падения (10.07.26).
+    start = args.start
+    if not args.demo:
+        try:
+            rng = _client().metadata.get_dataset_range(dataset=dataset)
+            avail = str(rng.get("start", ""))[:10]
+            if avail and start < avail:
+                print(f"  ВНИМАНИЕ: --start {start} раньше начала "
+                      f"{dataset} ({avail}). Поджимаю до {avail}.")
+                start = avail
+        except Exception:                                # noqa: BLE001
+            pass  # клэмп best-effort; если range недоступен — идём как есть
 
     if args.demo:
         print(f"ДЕМО-режим ({args.interval}): синтетика (не для выводов).")
-        data = pc.demo_panels(args.symbols, args.start, args.end,
+        data = pc.demo_panels(args.symbols, start, args.end,
                               interval=args.interval, carry=False)
     else:
-        print(f"Выгрузка {len(args.symbols)} акций из {DATASET} "
+        print(f"Выгрузка {len(args.symbols)} акций из {dataset} "
               f"({args.interval}, schema={schema}, "
-              f"adjust={args.adjust})...")
-        data = fetch_via_api(args.symbols, args.start, args.end,
-                             schema, adjust=args.adjust)
+              f"adjust={args.adjust}, start={start})...")
+        data = fetch_via_api(args.symbols, start, args.end,
+                             schema, adjust=args.adjust, dataset=dataset)
 
     panels = pc.build_panels(data, interval=args.interval)
     pc.write_panels(panels, args.out)
